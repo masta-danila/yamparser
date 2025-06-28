@@ -474,8 +474,8 @@ def expand_review_text(driver, container):
     return False
 
 def expand_all_reviews(driver):
-    """🚀 БЫСТРОЕ раскрытие всех свернутых отзывов на странице"""
-    print("🚀 Быстрое раскрытие всех отзывов...")
+    """🌊 ПЛАВНОЕ раскрытие всех свернутых отзывов с имитацией человеческого поведения"""
+    print("🌊 Плавное раскрытие всех отзывов...")
     start_time = time.time()
     
     stats = {
@@ -485,20 +485,7 @@ def expand_all_reviews(driver):
     }
     
     try:
-        # Быстрый предварительный скролл для загрузки всех отзывов
-        try:
-            scroll_container = driver.find_element(By.CSS_SELECTOR, ".scroll__container")
-            max_scroll = driver.execute_script("return arguments[0].scrollHeight - arguments[0].clientHeight", scroll_container)
-            
-            # Мгновенный скролл до конца и обратно
-            driver.execute_script(f"arguments[0].scrollTop = {max_scroll}", scroll_container)
-            time.sleep(1)
-            driver.execute_script("arguments[0].scrollTop = 0", scroll_container)
-            time.sleep(1)
-        except:
-            pass  # Игнорируем ошибки скроллинга
-        
-        # Получаем все отзывы
+        # Получаем все отзывы без предварительного скроллинга
         reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
         stats['total_reviews'] = len(reviews)
         
@@ -508,12 +495,31 @@ def expand_all_reviews(driver):
         
         print(f"📝 Найдено отзывов: {stats['total_reviews']}")
         
-        # Быстрая обработка всех отзывов
+        # Плавная обработка всех отзывов с естественным скроллингом
         for i, review in enumerate(reviews):
             try:
-                # Быстрая прокрутка к отзыву
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'})", review)
-                time.sleep(0.2)  # Минимальная пауза
+                # 🌊 ПЛАВНАЯ прокрутка к отзыву с имитацией человеческого поведения
+                
+                # Сначала плавно прокручиваем к отзыву
+                driver.execute_script("""
+                    arguments[0].scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'center',
+                        inline: 'nearest'
+                    });
+                """, review)
+                
+                # Естественная пауза для наблюдения за прокруткой
+                import random
+                scroll_pause = random.uniform(0.8, 1.5)  # Случайная пауза 0.8-1.5 сек
+                time.sleep(scroll_pause)
+                
+                # Небольшая дополнительная прокрутка для имитации точной настройки позиции
+                try:
+                    driver.execute_script("window.scrollBy(0, arguments[0]);", random.randint(-20, 20))
+                    time.sleep(random.uniform(0.2, 0.4))
+                except:
+                    pass
                 
                 # Ищем кнопку раскрытия
                 try:
@@ -530,9 +536,16 @@ def expand_all_reviews(driver):
                         # Запоминаем длину текста до клика
                         text_length_before = len(review.text)
                         
-                        # JavaScript клик (быстрее)
+                        # Естественная пауза перед кликом (имитация чтения)
+                        reading_pause = random.uniform(0.3, 0.7)
+                        time.sleep(reading_pause)
+                        
+                        # Плавный клик с небольшой задержкой
                         driver.execute_script("arguments[0].click();", button)
-                        time.sleep(0.3)  # Короткая пауза на обработку
+                        
+                        # Пауза на обработку раскрытия
+                        expand_pause = random.uniform(0.5, 1.0)
+                        time.sleep(expand_pause)
                         
                         # Проверяем результат
                         text_length_after = len(review.text)
@@ -544,9 +557,10 @@ def expand_all_reviews(driver):
                 
                 stats['reviews_processed'] += 1
                 
-                # Микропауза между отзывами
+                # Естественная пауза между отзывами (имитация перехода к следующему)
                 if i < len(reviews) - 1:
-                    time.sleep(0.1)
+                    between_reviews_pause = random.uniform(0.4, 0.8)
+                    time.sleep(between_reviews_pause)
                 
             except Exception as e:
                 continue
@@ -561,7 +575,7 @@ def expand_all_reviews(driver):
         return stats['reviews_expanded']
         
     except Exception as e:
-        print(f"❌ Ошибка быстрого раскрытия: {e}")
+        print(f"❌ Ошибка плавного раскрытия: {e}")
         return 0
 
 def extract_review_details(driver, max_reviews=10):
@@ -1254,6 +1268,8 @@ def parse_review_date(date_str: str) -> str:
         return None
     
     try:
+        import re
+        
         # Словарь месяцев на английском и русском
         months = {
             # Английские месяцы
@@ -1277,11 +1293,22 @@ def parse_review_date(date_str: str) -> str:
         # Нормализуем входную строку
         date_str_clean = date_str.strip()
         
-        # Формат: "May 28", "January 22", "28 мая", "22 января"
+        # ========== ФОРМАТ С ГОДОМ ==========
+        # "November 5, 2024", "April 19, 2023", "May 17, 2022"
+        pattern_with_year = r'([A-Za-zа-я]+)\s+(\d{1,2}),?\s+(\d{4})'
+        match = re.search(pattern_with_year, date_str_clean)
+        if match:
+            month_name, day, year = match.groups()
+            if month_name in months:
+                month = months[month_name]
+                day = day.zfill(2)
+                return f"{year}-{month}-{day}"
+        
+        # ========== ФОРМАТ БЕЗ ГОДА ==========
+        # "February 4", "January 4" - предполагаем текущий год
         if ' ' in date_str_clean:
             parts = date_str_clean.split()
             if len(parts) == 2:
-                # Проверяем оба варианта: "месяц день" и "день месяц"
                 first_part, second_part = parts
                 
                 # Вариант 1: "May 28" (месяц день)
@@ -1298,17 +1325,32 @@ def parse_review_date(date_str: str) -> str:
                     day = first_part.zfill(2)
                     return f"{year}-{month}-{day}"
         
-        # Если формат не распознан, пытаемся найти месяц в строке
+        # ========== ДОПОЛНИТЕЛЬНЫЙ ПОИСК ==========
+        # Ищем любой месяц в строке
         for month_name, month_num in months.items():
             if month_name.lower() in date_str_clean.lower():
-                # Ищем числа в строке
-                import re
+                # Ищем все числа в строке
                 numbers = re.findall(r'\d+', date_str_clean)
                 if numbers:
-                    day = numbers[0].zfill(2)
+                    # Если есть 4-значное число, это год
                     year = datetime.now().year
+                    day = numbers[0]
+                    
+                    for num in numbers:
+                        if len(num) == 4 and num.isdigit():
+                            year = int(num)
+                            break
+                    
+                    # Берем первое 1-2 значное число как день
+                    for num in numbers:
+                        if len(num) <= 2 and 1 <= int(num) <= 31:
+                            day = num
+                            break
+                    
+                    day = day.zfill(2)
                     return f"{year}-{month_num}-{day}"
         
+        print(f"⚠️ Не удалось распарсить дату: '{date_str}'")
         return date_str  # Возвращаем как есть, если не удалось распарсить
         
     except Exception as e:
@@ -1585,12 +1627,12 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         
         # БЕЗОПАСНОСТЬ: Пауза после сортировки
         if sort_applied:
-            human_pause = random.uniform(1.0, 3.0)
+            human_pause = random.uniform(1.0, 2.0)
             print(f"⏳ Пауза после сортировки: {human_pause:.1f} сек...")
             time.sleep(human_pause)
         
-        # 🚀 БЫСТРОЕ раскрытие всех отзывов ПЕРЕД парсингом
-        print(f"\n🚀 Быстрое раскрытие всех отзывов...")
+        # 🌊 ПЛАВНОЕ раскрытие всех отзывов ПЕРЕД парсингом
+        print(f"\n🌊 Плавное раскрытие всех отзывов...")
         expanded_count = expand_all_reviews(driver)
         print(f"✅ Раскрыто отзывов: {expanded_count}")
         
@@ -1664,7 +1706,9 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
 def main():
     """Основная функция"""
     # URL по умолчанию - страница Адверт Про
-    default_url = "https://yandex.ru/maps/org/advert_pro/168085394903/reviews/?ll=37.620510%2C55.627661&tab=reviews&z=17.57"
+    default_url = "https://yandex.ru/maps/org/kombinat_sotsialnogo_pitaniya/1111195101/reviews/?ll=37.597909%2C54.210244&z=17.63"
+    default_url = "https://yandex.ru/maps/org/bud_zdorov_/59625744337/reviews/?ll=37.596983%2C54.209918&z=17.63"
+
     
     # ============= НАСТРОЙКИ ПАРСИНГА =============
     MAX_DAYS_BACK = 1095        # Количество дней назад для первичного парсинга (3 года)
