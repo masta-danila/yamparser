@@ -1,6 +1,13 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+# Импорт seleniumwire для рабочих прокси
+try:
+    from seleniumwire import webdriver as wiredriver
+    SELENIUMWIRE_AVAILABLE = True
+except ImportError:
+    SELENIUMWIRE_AVAILABLE = False
+    wiredriver = None
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -31,8 +38,17 @@ except ImportError:
     CAPTCHA_SOLVER_AVAILABLE = False
     print("⚠️ Модуль selenium_captcha_solver.py не найден - CAPTCHA будет обрабатываться базовым способом")
 
-def setup_driver(device_type="desktop"):
-    """Настройка драйвера для получения отзывов"""
+# Импорт менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)
+try:
+    from proxy_manager_seleniumwire import ProxyManagerSeleniumWire
+    PROXY_AVAILABLE = True
+    print("✅ Модуль рабочих прокси (seleniumwire) подключен")
+except ImportError:
+    PROXY_AVAILABLE = False
+    print("⚠️ Модуль proxy_manager_seleniumwire.py не найден - прокси будут недоступны")
+
+def setup_driver(device_type="desktop", proxy_manager=None):
+    """Настройка драйвера для получения отзывов с поддержкой рабочих прокси (seleniumwire)"""
     print(f"🚀 Настройка Selenium драйвера ({device_type})...")
     
     # Настройки браузера
@@ -41,8 +57,29 @@ def setup_driver(device_type="desktop"):
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
-    # Создаем папку для профиля
-    user_data_dir = os.path.join(os.getcwd(), "reviews_profile")
+    # Настройка прокси если доступен менеджер (РАБОЧИЙ МЕТОД SELENIUMWIRE)
+    current_proxy = None
+    proxy_options = None
+    use_seleniumwire = False
+    
+    if proxy_manager and PROXY_AVAILABLE and SELENIUMWIRE_AVAILABLE:
+        current_proxy = proxy_manager.get_next_proxy()
+        if current_proxy:
+            # Используем рабочий метод seleniumwire
+            chrome_options, proxy_options = proxy_manager.configure_seleniumwire_proxy(current_proxy)
+            options = chrome_options  # Заменяем на настроенные опции
+            use_seleniumwire = True
+            print(f"🌐 Используется рабочий прокси (seleniumwire): {current_proxy['ip']}:{current_proxy['port']}")
+        else:
+            print("⚠️ Нет доступных прокси, используется прямое соединение")
+    elif proxy_manager and PROXY_AVAILABLE and not SELENIUMWIRE_AVAILABLE:
+        print("⚠️ Прокси менеджер доступен, но seleniumwire не установлен")
+        print("💡 Установите: pip install selenium-wire")
+    
+    # Создаем папку для профиля с уникальным timestamp
+    import time
+    timestamp = int(time.time() * 1000)  # Миллисекунды для уникальности
+    user_data_dir = os.path.join(os.getcwd(), f"reviews_profile_{timestamp}")
     os.makedirs(user_data_dir, exist_ok=True)
     options.add_argument(f"--user-data-dir={user_data_dir}")
     
@@ -57,7 +94,24 @@ def setup_driver(device_type="desktop"):
     
     print(f"📁 Профиль: {user_data_dir}")
     
-    # Получаем и настраиваем драйвер
+    # Создаем драйвер (с поддержкой seleniumwire для прокси)
+    if use_seleniumwire and proxy_options and SELENIUMWIRE_AVAILABLE:
+        print("🔧 Создаем драйвер с seleniumwire и прокси...")
+        try:
+            driver = wiredriver.Chrome(
+                options=options,
+                seleniumwire_options=proxy_options
+            )
+            # Убираем признаки автоматизации
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            print("✅ Драйвер с рабочими прокси создан успешно!")
+            return driver
+        except Exception as e:
+            print(f"❌ Ошибка создания драйвера с прокси: {e}")
+            print("🔄 Переключаемся на обычный драйвер...")
+    
+    # Обычный драйвер (без прокси или если seleniumwire недоступен)
+    print("🔧 Создаем обычный драйвер...")
     driver_path = ChromeDriverManager().install()
     driver_dir = os.path.dirname(driver_path)
     actual_driver = os.path.join(driver_dir, "chromedriver")
@@ -1757,7 +1811,7 @@ def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) 
         print(f"❌ Ошибка проверки checkpoint: {e}")
         return False
 
-def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100):
+def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True):
     """
     Основная функция для получения отзывов с Яндекс Карт
     
@@ -1767,6 +1821,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         wait_time: время ожидания в секундах
         max_days_back: максимальное количество дней назад для первичного парсинга
         max_reviews_limit: максимальное количество отзывов для парсинга
+        use_proxy: использовать ли прокси (по умолчанию True)
     
     Returns:
         dict: результаты парсинга
@@ -1788,9 +1843,24 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней".format(max_days_back))
         parsing_strategy = "initial"
     
-    # Настройка и запуск браузера
+    # Инициализация менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)
+    proxy_manager = None
+    if use_proxy and PROXY_AVAILABLE:
+        try:
+            proxy_manager = ProxyManagerSeleniumWire()
+            stats = proxy_manager.get_stats()
+            working_proxies = stats['total_proxies']
+            print(f"✅ Загружено {working_proxies} рабочих прокси")
+        except Exception as e:
+            print(f"❌ Ошибка инициализации прокси: {e}")
+            print("🔄 Продолжаем без прокси...")
+            proxy_manager = None
+    elif use_proxy and not PROXY_AVAILABLE:
+        print("⚠️ Прокси запрошены, но модуль недоступен")
+    
+    # Настройка и запуск браузера с поддержкой прокси
     print(f"🚀 Настройка Selenium драйвера ({device_type})...")
-    driver = setup_driver(device_type)
+    driver = setup_driver(device_type, proxy_manager)
     
     if not driver:
         print("❌ Не удалось запустить браузер")
@@ -1938,11 +2008,25 @@ def main():
 
     
     # ============= НАСТРОЙКИ ПАРСИНГА =============
-    MAX_DAYS_BACK = 30        # Количество дней назад для первичного парсинга (3 года)
+    MAX_DAYS_BACK = 10        # Количество дней назад для первичного парсинга (3 года)
     MAX_REVIEWS_LIMIT = 2000    # Максимальное количество отзывов для парсинга
     DEVICE_TYPE = "mobile"    # Тип устройства: "mobile" или "desktop" 
     WAIT_TIME = 3             # Время ожидания загрузки страницы (секунды)
+    USE_PROXY = True          # Использовать прокси по умолчанию
     # =============================================
+    
+    # Проверяем аргументы командной строки
+    url = default_url
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == "--no-proxy":
+            USE_PROXY = False
+            print("🚫 Прокси отключены через --no-proxy")
+        elif not arg.startswith("--"):
+            url = arg
+            print(f"📝 URL из аргументов: {url}")
+    
+    if url == default_url:
+        print(f"📝 URL по умолчанию: {url}")
     
     print("🗺️ Получение отзывов с Яндекс Карт")
     print("=" * 50)
@@ -1951,15 +2035,8 @@ def main():
     print(f"   📊 Максимум отзывов: {MAX_REVIEWS_LIMIT}")
     print(f"   📱 Устройство: {DEVICE_TYPE}")
     print(f"   ⏱️ Время ожидания: {WAIT_TIME} сек")
+    print(f"   🌐 Использовать прокси: {'Да' if USE_PROXY else 'Нет'}")
     print("=" * 50)
-    
-    # Получаем URL из аргументов командной строки или используем по умолчанию
-    if len(sys.argv) > 1:
-        url = sys.argv[1]
-        print(f"📝 URL из аргументов: {url}")
-    else:
-        url = default_url
-        print(f"📝 URL по умолчанию: {url}")
     
     print(f"\n📱 Используем: {DEVICE_TYPE} устройство (iPhone 13) с раскрытием отзывов")
     
@@ -1969,7 +2046,8 @@ def main():
         device_type=DEVICE_TYPE, 
         wait_time=WAIT_TIME,
         max_days_back=MAX_DAYS_BACK,
-        max_reviews_limit=MAX_REVIEWS_LIMIT
+        max_reviews_limit=MAX_REVIEWS_LIMIT,
+        use_proxy=USE_PROXY
     )
     
     if result["success"]:

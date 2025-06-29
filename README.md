@@ -8,6 +8,7 @@
 - 🔄 **Инкрементальный парсинг** с checkpoint системой
 - 🤖 **Автоматическое решение CAPTCHA**
 - 📱 **Мобильная эмуляция** для обхода блокировок
+- 🌐 **Быстрая система прокси** без предварительного тестирования
 - 💾 **SQLite база данных** с защитой от дубликатов
 - 🎯 **Фильтрация официальных ответов**
 - 📊 **Детальная статистика** и отчетность
@@ -25,13 +26,29 @@ pip install -r requirements.txt
 python setup_database.py
 ```
 
-### 2. Запуск парсинга
+### 2. Настройка прокси (опционально)
+
+Создайте файл `proxy.txt` с вашими прокси в формате `IP:PORT:USERNAME:PASSWORD`:
+```
+# Формат: IP:PORT:USERNAME:PASSWORD
+82.97.251.114:16172:nEVzuQ:YKAGuCukum2s
+203.0.113.10:3128:user1:pass1
+198.51.100.20:8080:user2:pass2
+
+# Комментарии начинаются с #
+# Пустые строки игнорируются
+```
+
+### 3. Запуск парсинга
 ```bash
 # Парсинг по умолчанию (Advert Pro)
 python get_reviews.py
 
 # Парсинг конкретной организации
 python get_reviews.py "https://yandex.ru/maps/org/organization_name/123456789/reviews/"
+
+# Тестирование прокси
+python test_proxy_integration.py
 ```
 
 ## 📁 Структура проекта
@@ -41,6 +58,12 @@ python get_reviews.py "https://yandex.ru/maps/org/organization_name/123456789/re
 - `reviews_database.py` - Работа с базой данных
 - `selenium_captcha_solver.py` - Решение CAPTCHA
 - `setup_database.py` - Инициализация БД
+
+### Прокси система:
+- `proxy_manager.py` - Менеджер прокси серверов
+- `proxy_utils.py` - Утилиты для работы с прокси
+- `test_proxy_integration.py` - Тестирование прокси
+- `proxy.txt` - Файл с прокси серверами
 
 ### Вспомогательные файлы:
 - `.gitignore` - Настройки git
