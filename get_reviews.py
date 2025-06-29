@@ -473,6 +473,190 @@ def expand_review_text(driver, container):
     
     return False
 
+def expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_info=None):
+    """🌊 ПЛАВНОЕ раскрытие отзывов с проверкой дат и checkpoint - останавливается при достижении старой даты или checkpoint"""
+    from datetime import datetime, timedelta
+    
+    print("🌊 Плавное раскрытие отзывов с проверкой дат и checkpoint...")
+    start_time = time.time()
+    
+    # Вычисляем дату отсечения, если указана
+    cutoff_date = None
+    if max_days_back:
+        cutoff_date = datetime.now() - timedelta(days=max_days_back)
+        print(f"📅 Остановка при достижении даты старше: {cutoff_date.strftime('%Y-%m-%d')}")
+    
+    # Информация о checkpoint
+    checkpoint_author = None
+    checkpoint_date = None
+    if checkpoint_info and checkpoint_info.get('has_checkpoint'):
+        checkpoint_author = checkpoint_info.get('last_author')
+        checkpoint_date = checkpoint_info.get('last_date')
+        if checkpoint_author and checkpoint_date:
+            print(f"🎯 Checkpoint: {checkpoint_author} ({checkpoint_date})")
+    
+    stats = {
+        'total_reviews': 0,
+        'reviews_expanded': 0,
+        'reviews_processed': 0,
+        'date_limit_reached': False,
+        'checkpoint_reached': False
+    }
+    
+    try:
+        # Получаем все отзывы без предварительного скроллинга
+        reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+        stats['total_reviews'] = len(reviews)
+        
+        if stats['total_reviews'] == 0:
+            print("⚠️ Отзывы не найдены")
+            return 0
+        
+        print(f"📝 Найдено отзывов: {stats['total_reviews']}")
+        
+        # Плавная обработка всех отзывов с естественным скроллингом и проверкой дат
+        for i, review in enumerate(reviews):
+            try:
+                # 🎯 ПРОВЕРКА ДАТЫ ОТЗЫВА И CHECKPOINT ПЕРЕД ОБРАБОТКОЙ
+                review_date_str = get_review_date_quickly(review)
+                
+                # Проверяем checkpoint
+                if checkpoint_date and review_date_str:
+                    try:
+                        # Парсим дату отзыва в стандартный формат (если ещё не распарсена)
+                        import re
+                        if re.match(r'^\d{4}-\d{2}-\d{2}$', review_date_str):
+                            # Дата уже в формате YYYY-MM-DD
+                            parsed_review_date = review_date_str
+                        else:
+                            # Парсим дату
+                            parsed_review_date = parse_review_date(review_date_str)
+                        
+                        # Преобразуем checkpoint_date в строку если это объект date
+                        checkpoint_date_str = str(checkpoint_date) if checkpoint_date else None
+                        
+                        # ОТЛАДКА: выводим информацию о проверке
+                        print(f"🔍 Отзыв #{i+1}: дата '{parsed_review_date}' vs checkpoint '{checkpoint_date_str}'")
+                        
+                        # Сравниваем с checkpoint датой
+                        if parsed_review_date == checkpoint_date_str:
+                            print(f"🎯 Достигнут checkpoint по дате! Дата отзыва: {parsed_review_date}")
+                            print(f"🛑 Остановка раскрытия отзывов на позиции #{i+1}")
+                            stats['checkpoint_reached'] = True
+                            break
+                        
+                        # Если дата отзыва старше checkpoint даты - тоже останавливаемся
+                        if parsed_review_date and checkpoint_date_str and parsed_review_date < checkpoint_date_str:
+                            print(f"🎯 Достигнута дата старше checkpoint! Дата отзыва: {parsed_review_date} старше checkpoint: {checkpoint_date_str}")
+                            print(f"🛑 Остановка раскрытия отзывов на позиции #{i+1}")
+                            stats['checkpoint_reached'] = True
+                            break
+                            
+                    except Exception as e:
+                        print(f"❌ Ошибка проверки checkpoint для отзыва #{i+1}: {e}")
+                        pass  # Если не удалось распарсить дату, продолжаем
+                
+                # Проверяем дату отсечения (только если нет checkpoint или он не найден)
+                if cutoff_date and review_date_str:
+                    try:
+                        review_date = datetime.strptime(review_date_str, '%Y-%m-%d')
+                        
+                        # Если отзыв старше целевой даты - останавливаем обработку
+                        if review_date < cutoff_date:
+                            print(f"🎯 Достигнута дата отсечения! Отзыв от {review_date_str} старше чем {cutoff_date.strftime('%Y-%m-%d')}")
+                            print(f"🛑 Остановка обработки отзывов на позиции #{i+1}")
+                            stats['date_limit_reached'] = True
+                            break
+                            
+                    except ValueError:
+                        pass  # Если не удалось распарсить дату, продолжаем
+                
+                # 🌊 ПЛАВНАЯ прокрутка к отзыву с имитацией человеческого поведения
+                
+                # Сначала плавно прокручиваем к отзыву
+                driver.execute_script("""
+                    arguments[0].scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'center',
+                        inline: 'nearest'
+                    });
+                """, review)
+                
+                # Естественная пауза для наблюдения за прокруткой
+                import random
+                scroll_pause = random.uniform(0.8, 1.5)  # Случайная пауза 0.8-1.5 сек
+                time.sleep(scroll_pause)
+                
+                # Небольшая дополнительная прокрутка для имитации точной настройки позиции
+                try:
+                    driver.execute_script("window.scrollBy(0, arguments[0]);", random.randint(-20, 20))
+                    time.sleep(random.uniform(0.2, 0.4))
+                except:
+                    pass
+                
+                # Ищем кнопку раскрытия
+                try:
+                    button = review.find_element(By.CSS_SELECTOR, ".business-review-view__expand")
+                    if button.is_displayed():
+                        # ФИЛЬТРАЦИЯ: Проверяем, что это НЕ официальный ответ
+                        review_text = review.text.lower()
+                        if any(phrase in review_text for phrase in [
+                            'business response', 'official response', 'response from business',
+                            'ответ от организации', 'официальный ответ', 'ответ компании'
+                        ]):
+                            continue  # Пропускаем официальные ответы
+                        
+                        # Запоминаем длину текста до клика
+                        text_length_before = len(review.text)
+                        
+                        # Естественная пауза перед кликом (имитация чтения)
+                        reading_pause = random.uniform(0.3, 0.7)
+                        time.sleep(reading_pause)
+                        
+                        # Плавный клик с небольшой задержкой
+                        driver.execute_script("arguments[0].click();", button)
+                        
+                        # Пауза на обработку раскрытия
+                        expand_pause = random.uniform(0.5, 1.0)
+                        time.sleep(expand_pause)
+                        
+                        # Проверяем результат
+                        text_length_after = len(review.text)
+                        if text_length_after > text_length_before:
+                            stats['reviews_expanded'] += 1
+                        
+                except:
+                    pass  # Кнопка не найдена или не кликается
+                
+                stats['reviews_processed'] += 1
+                
+                # Естественная пауза между отзывами (имитация перехода к следующему)
+                if i < len(reviews) - 1:
+                    between_reviews_pause = random.uniform(0.4, 0.8)
+                    time.sleep(between_reviews_pause)
+                
+            except Exception as e:
+                continue
+        
+        # Статистика
+        total_time = time.time() - start_time
+        success_rate = (stats['reviews_expanded'] / stats['reviews_processed'] * 100) if stats['reviews_processed'] > 0 else 0
+        
+        print(f"✅ Раскрытие завершено за {total_time:.1f}с")
+        print(f"📊 Обработано отзывов: {stats['reviews_processed']}/{stats['total_reviews']}")
+        print(f"📊 Успешно раскрыто: {stats['reviews_expanded']}/{stats['reviews_processed']} ({success_rate:.1f}%)")
+        
+        if stats['checkpoint_reached']:
+            print(f"🎯 Остановлено по достижении checkpoint")
+        elif stats['date_limit_reached']:
+            print(f"🎯 Остановлено по достижении даты отсечения")
+        
+        return stats['reviews_expanded']
+        
+    except Exception as e:
+        print(f"❌ Ошибка плавного раскрытия с проверкой дат: {e}")
+        return 0
+
 def expand_all_reviews(driver):
     """🌊 ПЛАВНОЕ раскрытие всех свернутых отзывов с имитацией человеческого поведения"""
     print("🌊 Плавное раскрытие всех отзывов...")
@@ -1305,7 +1489,7 @@ def parse_review_date(date_str: str) -> str:
                 return f"{year}-{month}-{day}"
         
         # ========== ФОРМАТ БЕЗ ГОДА ==========
-        # "February 4", "January 4" - предполагаем текущий год
+        # "February 4", "January 4" - определяем год логично
         if ' ' in date_str_clean:
             parts = date_str_clean.split()
             if len(parts) == 2:
@@ -1313,14 +1497,38 @@ def parse_review_date(date_str: str) -> str:
                 
                 # Вариант 1: "May 28" (месяц день)
                 if first_part in months and second_part.isdigit():
-                    year = datetime.now().year
+                    current_date = datetime.now()
+                    month_num = int(months[first_part])
+                    day_num = int(second_part)
+                    
+                    # Если месяц больше текущего, то это прошлый год
+                    if month_num > current_date.month:
+                        year = current_date.year - 1
+                    # Если месяц равен текущему, но день больше текущего, то это прошлый год
+                    elif month_num == current_date.month and day_num > current_date.day:
+                        year = current_date.year - 1
+                    else:
+                        year = current_date.year
+                    
                     month = months[first_part]
                     day = second_part.zfill(2)
                     return f"{year}-{month}-{day}"
                 
                 # Вариант 2: "28 мая" (день месяц)
                 elif first_part.isdigit() and second_part in months:
-                    year = datetime.now().year
+                    current_date = datetime.now()
+                    month_num = int(months[second_part])
+                    day_num = int(first_part)
+                    
+                    # Если месяц больше текущего, то это прошлый год
+                    if month_num > current_date.month:
+                        year = current_date.year - 1
+                    # Если месяц равен текущему, но день больше текущего, то это прошлый год
+                    elif month_num == current_date.month and day_num > current_date.day:
+                        year = current_date.year - 1
+                    else:
+                        year = current_date.year
+                    
                     month = months[second_part]
                     day = first_part.zfill(2)
                     return f"{year}-{month}-{day}"
@@ -1332,14 +1540,26 @@ def parse_review_date(date_str: str) -> str:
                 # Ищем все числа в строке
                 numbers = re.findall(r'\d+', date_str_clean)
                 if numbers:
-                    # Если есть 4-значное число, это год
-                    year = datetime.now().year
+                    current_date = datetime.now()
+                    year = current_date.year
                     day = numbers[0]
                     
+                    # Если есть 4-значное число, это год
                     for num in numbers:
                         if len(num) == 4 and num.isdigit():
                             year = int(num)
                             break
+                    else:
+                        # Если года нет, определяем логично
+                        month_num_int = int(month_num)
+                        day_num = int(day) if day.isdigit() else 1
+                        
+                        # Если месяц больше текущего, то это прошлый год
+                        if month_num_int > current_date.month:
+                            year = current_date.year - 1
+                        # Если месяц равен текущему, но день больше текущего, то это прошлый год
+                        elif month_num_int == current_date.month and day_num > current_date.day:
+                            year = current_date.year - 1
                     
                     # Берем первое 1-2 значное число как день
                     for num in numbers:
@@ -1631,9 +1851,16 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             print(f"⏳ Пауза после сортировки: {human_pause:.1f} сек...")
             time.sleep(human_pause)
         
-        # 🌊 ПЛАВНОЕ раскрытие всех отзывов ПЕРЕД парсингом
-        print(f"\n🌊 Плавное раскрытие всех отзывов...")
-        expanded_count = expand_all_reviews(driver)
+        # 🌊 ПЛАВНОЕ раскрытие отзывов с проверкой дат ПЕРЕД парсингом
+        print(f"\n🌊 Плавное раскрытие отзывов...")
+        
+        if parsing_strategy == "incremental":
+            # Инкрементальный парсинг - раскрываем до checkpoint
+            expanded_count = expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_info=checkpoint_info)
+        else:
+            # Первичный парсинг - раскрываем только до целевой даты
+            expanded_count = expand_all_reviews_with_date_check(driver, max_days_back)
+        
         print(f"✅ Раскрыто отзывов: {expanded_count}")
         
         # Извлекаем отзывы в зависимости от стратегии
@@ -1707,11 +1934,11 @@ def main():
     """Основная функция"""
     # URL по умолчанию - страница Адверт Про
     default_url = "https://yandex.ru/maps/org/kombinat_sotsialnogo_pitaniya/1111195101/reviews/?ll=37.597909%2C54.210244&z=17.63"
-    default_url = "https://yandex.ru/maps/org/bud_zdorov_/59625744337/reviews/?ll=37.596983%2C54.209918&z=17.63"
+    default_url = "https://yandex.ru/maps/org/tulskiy_gosudarstvenny_tsirk/1100333178/reviews/?ll=37.626170%2C54.189593&z=17.63"
 
     
     # ============= НАСТРОЙКИ ПАРСИНГА =============
-    MAX_DAYS_BACK = 1095        # Количество дней назад для первичного парсинга (3 года)
+    MAX_DAYS_BACK = 30        # Количество дней назад для первичного парсинга (3 года)
     MAX_REVIEWS_LIMIT = 2000    # Максимальное количество отзывов для парсинга
     DEVICE_TYPE = "mobile"    # Тип устройства: "mobile" или "desktop" 
     WAIT_TIME = 3             # Время ожидания загрузки страницы (секунды)
