@@ -47,6 +47,15 @@ except ImportError:
     PROXY_AVAILABLE = False
     print("⚠️ Модуль proxy_manager_seleniumwire.py не найден - прокси будут недоступны")
 
+# Импорт упрощенного обработчика всплывающих окон приложения
+try:
+    from simple_popup_handler import handle_popup_simple
+    POPUP_HANDLER_AVAILABLE = True
+    print("✅ Модуль простой обработки всплывающих окон подключен")
+except ImportError:
+    POPUP_HANDLER_AVAILABLE = False
+    print("⚠️ Модуль simple_popup_handler.py не найден - всплывающие окна не будут обрабатываться автоматически")
+
 def setup_driver(device_type="desktop", proxy_manager=None):
     """Настройка драйвера для получения отзывов с поддержкой рабочих прокси (seleniumwire)"""
     print(f"🚀 Настройка Selenium драйвера ({device_type})...")
@@ -1881,6 +1890,13 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         
         # Получаем информацию о странице
         page_info = get_page_info(driver)
+        
+        # 🔧 ОБРАБОТКА ВСПЛЫВАЮЩИХ ОКОН ПРИЛОЖЕНИЯ (простой метод)
+        if POPUP_HANDLER_AVAILABLE:
+            try:
+                handle_popup_simple(driver, verbose=False)
+            except Exception as e:
+                print(f"⚠️ Ошибка обработки всплывающих окон: {e}")
         
         # Проверяем на CAPTCHA
         if check_for_captcha(driver):
