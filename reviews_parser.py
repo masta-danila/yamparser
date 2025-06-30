@@ -1,19 +1,23 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-# Импорт seleniumwire для рабочих прокси
-try:
-    from seleniumwire import webdriver as wiredriver
-    SELENIUMWIRE_AVAILABLE = True
-except ImportError:
-    SELENIUMWIRE_AVAILABLE = False
-    wiredriver = None
+# Импорт новых модулей
+from driver_manager import setup_driver, get_driver_creation_lock
+from page_handler import (
+    extract_card_id_from_url, get_page_info, check_for_captcha, 
+    handle_captcha_automatically, click_sort_by_date, handle_popup_if_available,
+    scroll_page, POPUP_HANDLER_AVAILABLE
+)
+from review_extractor import (
+    find_reviews_on_page, extract_review_data, parse_date_string,
+    is_review_too_old, load_more_reviews
+)
+from data_processor import (
+    process_and_save_results, filter_reviews_by_date, limit_reviews_count,
+    clean_review_data, load_checkpoint, save_checkpoint
+)
+
+# Стандартные импорты
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-import os
-import stat
 import time
 import sys
 import re
@@ -30,15 +34,6 @@ except ImportError:
     DATABASE_AVAILABLE = False
     print("⚠️ Модуль reviews_database.py не найден - отзывы не будут сохраняться в БД")
 
-# Импорт функций решения CAPTCHA
-try:
-    from captcha_solver import detect_captcha as captcha_detect, solve_captcha as captcha_solve
-    CAPTCHA_SOLVER_AVAILABLE = True
-    print("✅ Модуль решения CAPTCHA подключен")
-except ImportError:
-    CAPTCHA_SOLVER_AVAILABLE = False
-    print("⚠️ Модуль captcha_solver.py не найден - CAPTCHA будет обрабатываться базовым способом")
-
 # Импорт менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)
 try:
     from proxy_manager import ProxyManagerSeleniumWire
@@ -48,407 +43,15 @@ except ImportError:
     PROXY_AVAILABLE = False
     print("⚠️ Модуль proxy_manager.py не найден - прокси будут недоступны")
 
-# Импорт упрощенного обработчика всплывающих окон приложения
-try:
-    from popup_handler import handle_popup_simple
-    POPUP_HANDLER_AVAILABLE = True
-    print("✅ Модуль простой обработки всплывающих окон подключен")
-except ImportError:
-    POPUP_HANDLER_AVAILABLE = False
-    print("⚠️ Модуль popup_handler.py не найден - всплывающие окна не будут обрабатываться автоматически")
+# Глобальная блокировка для создания драйверов (получаем из driver_manager)
+_driver_creation_lock = get_driver_creation_lock()
 
-# Модуль управления профилями больше не используется - создаем временные профили
+# Функция setup_driver теперь импортируется из driver_manager
+# Функция extract_card_id_from_url теперь импортируется из page_handler
 
-# Глобальная блокировка для создания драйверов
-_driver_creation_lock = threading.Lock()
+# Функции get_page_info, check_for_captcha, handle_captcha_automatically теперь импортируются из page_handler
 
-def setup_driver(device_type="desktop", proxy_manager=None, profile_path=None):
-    """Настройка драйвера для получения отзывов с поддержкой рабочих прокси (seleniumwire)"""
-    import threading
-    thread_id = threading.current_thread().ident
-    print(f"🚀 Настройка Selenium драйвера ({device_type}) в потоке {thread_id}...")
-    
-    # Настройки браузера
-    options = Options()
-    # options.add_argument("--headless")  # Оставляем видимым
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    
-    # Настройка прокси если доступен менеджер (РАБОЧИЙ МЕТОД SELENIUMWIRE)
-    current_proxy = None
-    proxy_options = None
-    use_seleniumwire = False
-    
-    if proxy_manager and PROXY_AVAILABLE and SELENIUMWIRE_AVAILABLE:
-        current_proxy = proxy_manager.get_random_proxy()  # Случайный прокси вместо последовательного
-        if current_proxy:
-            # Используем рабочий метод seleniumwire
-            chrome_options, proxy_options = proxy_manager.configure_seleniumwire_proxy(current_proxy)
-            options = chrome_options  # Заменяем на настроенные опции
-            use_seleniumwire = True
-            print(f"🌐 Используется случайный прокси (seleniumwire): {current_proxy['ip']}:{current_proxy['port']}")
-        else:
-            print("⚠️ Нет доступных прокси, используется прямое соединение")
-    elif proxy_manager and PROXY_AVAILABLE and not SELENIUMWIRE_AVAILABLE:
-        print("⚠️ Прокси менеджер доступен, но seleniumwire не установлен")
-        print("💡 Установите: pip install selenium-wire")
-    
-    # Управление профилями
-    user_data_dir = None
-    
-    # Если передан готовый профиль, используем его
-    if profile_path:
-        user_data_dir = profile_path
-        print(f"📁 Используется переданный профиль: {os.path.basename(profile_path)}")
-    elif device_type == "mobile":
-        # Создание временного профиля если не передан готовый
-        import tempfile
-        user_data_dir = tempfile.mkdtemp(prefix="chrome_profile_temp_")
-        print(f"📁 Создан временный профиль: {os.path.basename(user_data_dir)}")
-    else:
-        # Desktop режим - без профилей
-        user_data_dir = None
-        print(f"🖥️ Desktop режим: профили не используются")
-    
-    # Добавляем профиль только если он есть (mobile)
-    if user_data_dir:
-        options.add_argument(f"--user-data-dir={user_data_dir}")
-    
-    # Если нужна мобильная версия
-    mobile_device_size = None
-    if device_type == "mobile":
-        # Определяем размеры устройства (можно расширить для разных устройств)
-        device_width, device_height = 390, 844  # iPhone 13 по умолчанию
-        
-        mobile_emulation = {
-            "deviceMetrics": {"width": device_width, "height": device_height, "pixelRatio": 3.0},
-            "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
-        }
-        options.add_experimental_option("mobileEmulation", mobile_emulation)
-        mobile_device_size = (device_width, device_height)  # Сохраняем размер для настройки окна
-        
-        # Устанавливаем размер окна сразу при создании браузера
-        window_width = device_width + 50
-        window_height = device_height + 150
-        options.add_argument(f"--window-size={window_width},{window_height}")
-        print(f"📱 Используем мобильную эмуляцию: {device_width}x{device_height}")
-        print(f"📏 Размер окна будет установлен при создании: {window_width}x{window_height}")
-    
-    print(f"📁 Профиль: {user_data_dir}")
-    
-    # Создаем драйвер (с поддержкой seleniumwire для прокси)
-    if use_seleniumwire and proxy_options and SELENIUMWIRE_AVAILABLE:
-        print("🔧 Создаем драйвер с seleniumwire и прокси...")
-        driver = None
-        try:
-            with _driver_creation_lock:
-                driver = wiredriver.Chrome(
-                    options=options,
-                    seleniumwire_options=proxy_options
-                )
-                # Убираем признаки автоматизации
-                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                
-                print(f"✅ Драйвер с рабочими прокси создан успешно в потоке {thread_id}!")
-                return driver
-        except Exception as e:
-            print(f"❌ Ошибка создания драйвера с прокси: {e}")
-            # Закрываем неудачно созданный драйвер, если он существует
-            if driver:
-                try:
-                    driver.quit()
-                    print("🔒 Неудачный драйвер закрыт")
-                except:
-                    pass
-            print("🔄 Переключаемся на обычный драйвер...")
-    
-    # Обычный драйвер (без прокси или если seleniumwire недоступен)
-    print("🔧 Создаем обычный драйвер...")
-    
-    # Используем блокировку для предотвращения конфликтов при создании драйвера
-    with _driver_creation_lock:
-        driver_path = ChromeDriverManager().install()
-        driver_dir = os.path.dirname(driver_path)
-        actual_driver = os.path.join(driver_dir, "chromedriver")
-        
-        if os.path.exists(actual_driver):
-            # Исправляем права доступа
-            current_permissions = os.stat(actual_driver).st_mode
-            if not (current_permissions & stat.S_IXUSR):
-                print("🔧 Исправляем права доступа...")
-                os.chmod(actual_driver, current_permissions | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            
-            service = Service(actual_driver)
-            print(f"🔧 Создаем обычный драйвер в потоке {thread_id}...")
-            driver = webdriver.Chrome(service=service, options=options)
-            
-            return driver
-        else:
-            raise Exception("ChromeDriver не найден!")
-
-def extract_card_id_from_url(url: str) -> str:
-    """Извлечь ID карточки из URL Яндекс Карт"""
-    # Паттерн для поиска ID карточки в URL
-    # Ищем числовой ID после /org/название/
-    pattern = r'/org/[^/]+/(\d+)/?'
-    match = re.search(pattern, url)
-    
-    if match:
-        card_id = match.group(1)
-        print(f"🆔 Извлечен ID карточки: {card_id}")
-        return card_id
-    else:
-        print(f"❌ Не удалось извлечь ID карточки из URL: {url}")
-        return None
-
-def get_page_info(driver):
-    """Получение информации о странице"""
-    info = {
-        "url": driver.current_url,
-        "title": driver.title,
-        "timestamp": time.time()
-    }
-    
-    print(f"🌐 URL: {info['url']}")
-    print(f"📄 Заголовок: {info['title']}")
-    
-    return info
-
-def check_for_captcha(driver):
-    """Улучшенная проверка на наличие CAPTCHA"""
-    # Проверяем URL - самый надежный способ
-    if "showcaptcha" in driver.current_url.lower():
-        print("🤖 CAPTCHA обнаружена в URL (showcaptcha)")
-        return True
-    
-    # Проверяем заголовок страницы
-    title = driver.title.lower()
-    if any(phrase in title for phrase in ["are you not a robot", "не робот", "captcha"]):
-        print(f"🤖 CAPTCHA обнаружена в заголовке: '{driver.title}'")
-        return True
-    
-    # Проверяем специфичные элементы CAPTCHA
-    captcha_selectors = [
-        "iframe[src*='captcha']",
-        ".smart-captcha",
-        ".captcha-checkbox",
-        "input[type='checkbox'][aria-label*='робот']",
-        "[data-testid*='captcha']"
-    ]
-    
-    for selector in captcha_selectors:
-        try:
-            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-            if elements and any(elem.is_displayed() for elem in elements):
-                print(f"🤖 CAPTCHA обнаружена по селектору: {selector}")
-                return True
-        except:
-            continue
-    
-    # Проверяем специфичные тексты только если они видимы на странице
-    captcha_texts = [
-        "Подтвердите, что запросы отправляли вы",
-        "Я не робот",
-        "I am not a robot"
-    ]
-    
-    for text in captcha_texts:
-        try:
-            xpath = f"//*[contains(text(), '{text}')]"
-            elements = driver.find_elements(By.XPATH, xpath)
-            if elements and any(elem.is_displayed() for elem in elements):
-                print(f"🤖 CAPTCHA обнаружена по тексту: '{text}'")
-                return True
-        except:
-            continue
-    
-    return False
-
-def handle_captcha_automatically(driver):
-    """Автоматическое решение CAPTCHA с использованием функций из selenium_captcha_solver.py"""
-    print("🤖 Запускаем автоматическое решение CAPTCHA...")
-    
-    if not CAPTCHA_SOLVER_AVAILABLE:
-        print("❌ Модуль решения CAPTCHA недоступен")
-        return False
-    
-    try:
-        # Используем продвинутую детекцию CAPTCHA
-        captcha_found, captcha_element = captcha_detect(driver)
-        
-        if not captcha_found:
-            print("✅ CAPTCHA не обнаружена продвинутым детектором")
-            return True
-        
-        print("🎯 CAPTCHA подтверждена, пытаемся решить...")
-        
-        # Пытаемся решить CAPTCHA
-        solved = captcha_solve(driver, captcha_element)
-        
-        if solved:
-            print("🎉 CAPTCHA успешно решена автоматически!")
-            # Ждем перезагрузки страницы
-            time.sleep(3)
-            
-            # Проверяем, что мы вернулись на нужную страницу
-            final_captcha_check, _ = captcha_detect(driver)
-            if not final_captcha_check:
-                print("✅ Подтверждено: CAPTCHA больше нет")
-                return True
-            else:
-                print("⚠️ CAPTCHA все еще присутствует")
-                return False
-        else:
-            print("❌ Не удалось решить CAPTCHA автоматически")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Ошибка при автоматическом решении CAPTCHA: {e}")
-        return False
-
-def click_sort_by_date(driver):
-    """Клик по сортировке отзывов по дате/новизне"""
-    print("📅 Ищем кнопку сортировки...")
-    
-    # Селекторы для кнопки "By default" / "По умолчанию" на основе диагностики
-    default_button_selectors = [
-        # Найденный в диагностике - приоритет
-        "div.rating-ranking-view[role='button']",
-        ".rating-ranking-view",
-        
-        # Текстовые селекторы
-        "//div[@role='button' and contains(text(), 'By default')]",
-        "//div[contains(@class, 'rating-ranking-view')]",
-        "//span[contains(text(), 'By default')]",
-        "//div[contains(text(), 'By default')]",
-        "//button[contains(text(), 'By default')]",
-        "//button[contains(text(), 'По умолчанию')]",
-        "//span[contains(text(), 'По умолчанию')]",
-        "//div[contains(text(), 'По умолчанию')]",
-        "//a[contains(text(), 'By default')]",
-        "//a[contains(text(), 'По умолчанию')]",
-        
-        # Общие селекторы для кнопок сортировки
-        "[role='button']",
-        "button[data-testid*='sort']",
-        "button[class*='sort']",
-        "button[class*='filter']",
-        ".sort-button",
-        ".filter-button",
-        ".reviews-sort button"
-    ]
-    
-    # Селекторы для опций "New first" (найдено в диагностике)
-    date_option_selectors = [
-        # Найденные в диагностике - приоритет
-        "//div[@class='rating-ranking-view__popup-line' and contains(text(), 'New first')]",
-        ".rating-ranking-view__popup-line",
-        
-        # Текстовые селекторы для "New first"
-        "//div[contains(text(), 'New first')]",
-        "//span[contains(text(), 'New first')]",
-        "//button[contains(text(), 'New first')]",
-        
-        # Альтернативные варианты
-        "//div[contains(text(), 'By date')]",
-        "//div[contains(text(), 'По новизне')]",
-        "//div[contains(text(), 'По дате')]",
-        "//option[contains(text(), 'By date')]",
-        "//option[contains(text(), 'По новизне')]",
-        "//li[contains(text(), 'By date')]",
-        "//li[contains(text(), 'По новизне')]"
-    ]
-    
-    clicked_default = False
-    
-    # Шаг 1: Ищем и кликаем кнопку "By default" / "По умолчанию"
-    print("🔍 Ищем кнопку 'By default' или 'По умолчанию'...")
-    
-    for selector in default_button_selectors:
-        try:
-            if selector.startswith("//"):
-                elements = driver.find_elements(By.XPATH, selector)
-            else:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-            
-            for element in elements:
-                if element.is_displayed() and element.is_enabled():
-                    element_text = element.text.strip()
-                    print(f"✅ Найден элемент: {selector}")
-                    print(f"   📱 Текст: '{element_text}'")
-                    
-                    # Проверяем, содержит ли текст нужные слова
-                    if any(word in element_text.lower() for word in ['default', 'умолчанию', 'sort', 'сортир']):
-                        print("🎯 Подходящий элемент найден!")
-                        
-                        # Прокручиваем к элементу
-                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                        time.sleep(1)
-                        
-                        # Кликаем
-                        try:
-                            driver.execute_script("arguments[0].click();", element)
-                            print("🖱️ JavaScript клик по кнопке сортировки выполнен!")
-                        except:
-                            element.click()
-                            print("🖱️ Обычный клик по кнопке сортировки выполнен!")
-                        
-                        clicked_default = True
-                        time.sleep(2)  # Ждем появления меню
-                        break
-                    
-            if clicked_default:
-                break
-                
-        except Exception as e:
-            print(f"❌ Ошибка с селектором {selector}: {e}")
-            continue
-    
-    if not clicked_default:
-        print("❓ Кнопка 'By default' или 'По умолчанию' не найдена")
-        return False
-    
-    # Шаг 2: Ищем и кликаем опцию "New first"
-    print("📋 Ищем опцию 'New first' в выпадающем меню...")
-    
-    for selector in date_option_selectors:
-        try:
-            if selector.startswith("//"):
-                elements = driver.find_elements(By.XPATH, selector)
-            else:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-            
-            for element in elements:
-                if element.is_displayed() and element.is_enabled():
-                    element_text = element.text.strip()
-                    print(f"✅ Найдена опция: {selector}")
-                    print(f"   📱 Текст опции: '{element_text}'")
-                    
-                    # Проверяем, содержит ли текст "New first" или другие варианты сортировки по времени
-                    if any(word in element_text.lower() for word in ['new first', 'date', 'новизне', 'дате', 'newest']):
-                        print("🎯 Подходящая опция найдена!")
-                        
-                        # Прокручиваем и кликаем
-                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                        time.sleep(1)
-                        
-                        try:
-                            driver.execute_script("arguments[0].click();", element)
-                            print("🖱️ JavaScript клик по опции выполнен!")
-                        except:
-                            element.click()
-                            print("🖱️ Обычный клик по опции выполнен!")
-                        
-                        time.sleep(2)
-                        print("📅 Сортировка 'New first' применена!")
-                        return True
-                        
-        except Exception as e:
-            print(f"❌ Ошибка с селектором опции {selector}: {e}")
-            continue
-    
-    print("❓ Опция 'New first' не найдена в меню")
-    return False
+# Функция click_sort_by_date теперь импортируется из page_handler
 
 def extract_reviews(driver, max_reviews=10):
     """Извлечение текстов отзывов со страницы"""
@@ -895,8 +498,7 @@ def extract_review_details(driver, max_reviews=10):
             for container in containers:
                 if container.is_displayed():
                     try:
-                        # ОПТИМИЗАЦИЯ: Убираем повторное раскрытие - уже сделано быстрой функцией
-                        # expand_review_text(driver, container)  # Закомментировано для ускорения
+
                         
                         # Извлекаем различные части отзыва
                         review_data = {}
@@ -1381,48 +983,11 @@ def get_review_date_quickly(container):
     except Exception as e:
         return None
 
-def expand_review_text(driver, container):
-    """Раскрытие текста отзыва в конкретном контейнере"""
-    try:
-        # Ищем кнопку "more" в данном контейнере
-        expand_selectors = [
-            ".business-review-view__expand",
-            ".spoiler-view__expand",
-            "[class*='expand']",
-            "span:contains('more')",
-            "button:contains('more')"
-        ]
-        
-        for selector in expand_selectors:
-            try:
-                expand_button = container.find_element(By.CSS_SELECTOR, selector)
-                if expand_button and expand_button.is_displayed():
-                    # Получаем текст до клика
-                    text_before = container.text
-                    
-                    # Кликаем
-                    driver.execute_script("arguments[0].click();", expand_button)
-                    time.sleep(0.5)  # Короткая пауза
-                    
-                    # Проверяем, изменился ли текст
-                    text_after = container.text
-                    if len(text_after) > len(text_before):
-                        return True
-                        
-            except:
-                continue
-                
-        return False
-        
-    except Exception as e:
-        return False
+
 
 def extract_single_review_data(driver, container):
     """Извлечение данных одного отзыва из контейнера"""
     try:
-        # ОПТИМИЗАЦИЯ: Убираем повторное раскрытие - уже сделано быстрой функцией
-        # expand_review_text(driver, container)  # Закомментировано для ускорения
-        
         # Извлекаем различные части отзыва
         review_data = {}
         
@@ -1944,11 +1509,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         page_info = get_page_info(driver)
         
         # 🔧 ОБРАБОТКА ВСПЛЫВАЮЩИХ ОКОН ПРИЛОЖЕНИЯ (простой метод)
-        if POPUP_HANDLER_AVAILABLE:
-            try:
-                handle_popup_simple(driver, verbose=False)
-            except Exception as e:
-                print(f"⚠️ Ошибка обработки всплывающих окон: {e}")
+        handle_popup_if_available(driver)
         
         # Проверяем на CAPTCHA
         if check_for_captcha(driver):

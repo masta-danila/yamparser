@@ -4,7 +4,8 @@ import time
 import logging
 from threading import Thread, Lock
 from typing import List, Dict, Any
-from reviews_parser import get_reviews_page, _driver_creation_lock
+from reviews_parser import get_reviews_page
+from driver_manager import get_driver_creation_lock
 
 # Настройка логирования
 logging.basicConfig(
@@ -28,8 +29,8 @@ logging.getLogger('boto3').setLevel(logging.WARNING)
 # Оставляем наш логгер на уровне INFO
 logger.setLevel(logging.INFO)
 
-# Используем общую блокировку из reviews_parser для синхронизации между потоками
-driver_creation_lock = _driver_creation_lock
+# Используем общую блокировку из driver_manager для синхронизации между потоками
+driver_creation_lock = get_driver_creation_lock()
 
 def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile", 
                wait_time: int = 3, max_days_back: int = 10, max_reviews_limit: int = 2000, 
@@ -213,7 +214,7 @@ if __name__ == "__main__":
     # Настройки парсинга
     DEVICE_TYPE = "mobile"              # Тип устройства: "mobile" или "desktop"
     WAIT_TIME = 3                       # Время ожидания в секундах
-    MAX_DAYS_BACK = 10                  # Максимальное количество дней назад для первичного парсинга
+    MAX_DAYS_BACK = 5                  # Максимальное количество дней назад для первичного парсинга
     MAX_REVIEWS_LIMIT = 2000            # Максимальное количество отзывов для парсинга
     USE_PROXY = True                    # Использовать ли прокси
 

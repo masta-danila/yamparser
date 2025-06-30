@@ -1,0 +1,259 @@
+"""
+Модуль для работы со страницей Яндекс.Карт
+"""
+
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
+import re
+
+# Импорт функций решения CAPTCHA
+try:
+    from captcha_solver import detect_captcha as captcha_detect, solve_captcha as captcha_solve
+    CAPTCHA_SOLVER_AVAILABLE = True
+except ImportError:
+    CAPTCHA_SOLVER_AVAILABLE = False
+
+# Импорт упрощенного обработчика всплывающих окон приложения
+try:
+    from popup_handler import handle_popup_simple
+    POPUP_HANDLER_AVAILABLE = True
+except ImportError:
+    POPUP_HANDLER_AVAILABLE = False
+    handle_popup_simple = None
+
+def extract_card_id_from_url(url: str) -> str:
+    """Извлечь ID карточки из URL Яндекс Карт"""
+    # Паттерн для поиска ID карточки в URL
+    # Ищем числовой ID после /org/название/
+    pattern = r'/org/[^/]+/(\d+)/?'
+    match = re.search(pattern, url)
+    
+    if match:
+        card_id = match.group(1)
+        print(f"🆔 Извлечен ID карточки: {card_id}")
+        return card_id
+    else:
+        print(f"❌ Не удалось извлечь ID карточки из URL: {url}")
+        return None
+
+def get_page_info(driver):
+    """Получение информации о странице"""
+    info = {
+        "url": driver.current_url,
+        "title": driver.title,
+        "timestamp": time.time()
+    }
+    
+    print(f"🌐 URL: {info['url']}")
+    print(f"📄 Заголовок: {info['title']}")
+    
+    return info
+
+def check_for_captcha(driver):
+    """Улучшенная проверка на наличие CAPTCHA"""
+    # Проверяем URL - самый надежный способ
+    if "showcaptcha" in driver.current_url.lower():
+        print("🤖 CAPTCHA обнаружена в URL (showcaptcha)")
+        return True
+    
+    # Проверяем заголовок страницы
+    title = driver.title.lower()
+    if any(phrase in title for phrase in ["are you not a robot", "не робот", "captcha"]):
+        print(f"🤖 CAPTCHA обнаружена в заголовке: '{driver.title}'")
+        return True
+    
+    # Проверяем специфичные элементы CAPTCHA
+    captcha_selectors = [
+        "iframe[src*='captcha']",
+        ".smart-captcha",
+        ".captcha-checkbox",
+        "input[type='checkbox'][aria-label*='робот']",
+        "[data-testid*='captcha']"
+    ]
+    
+    for selector in captcha_selectors:
+        try:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            if elements and any(elem.is_displayed() for elem in elements):
+                print(f"🤖 CAPTCHA обнаружена по селектору: {selector}")
+                return True
+        except:
+            continue
+    
+    # Проверяем специфичные тексты только если они видимы на странице
+    captcha_texts = [
+        "Подтвердите, что запросы отправляли вы",
+        "Я не робот",
+        "I am not a robot"
+    ]
+    
+    for text in captcha_texts:
+        try:
+            xpath = f"//*[contains(text(), '{text}')]"
+            elements = driver.find_elements(By.XPATH, xpath)
+            if elements and any(elem.is_displayed() for elem in elements):
+                print(f"🤖 CAPTCHA обнаружена по тексту: '{text}'")
+                return True
+        except:
+            continue
+    
+    return False
+
+def handle_captcha_automatically(driver):
+    """Автоматическое решение CAPTCHA с использованием функций из captcha_solver.py"""
+    print("🤖 Запускаем автоматическое решение CAPTCHA...")
+    
+    if not CAPTCHA_SOLVER_AVAILABLE:
+        print("❌ Модуль решения CAPTCHA недоступен")
+        return False
+    
+    try:
+        # Используем продвинутую детекцию CAPTCHA
+        captcha_found, captcha_element = captcha_detect(driver)
+        
+        if not captcha_found:
+            print("✅ CAPTCHA не обнаружена продвинутым детектором")
+            return True
+        
+        print("🎯 CAPTCHA подтверждена, пытаемся решить...")
+        
+        # Пытаемся решить CAPTCHA
+        success = captcha_solve(driver, captcha_element)
+        
+        if success:
+            print("✅ CAPTCHA успешно решена!")
+            return True
+        else:
+            print("❌ Не удалось решить CAPTCHA автоматически")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Ошибка при автоматическом решении CAPTCHA: {e}")
+        return False
+
+def click_sort_by_date(driver):
+    """Переключение сортировки отзывов на 'Сначала новые' (по дате)"""
+    print("📅 Ищем кнопку сортировки...")
+    
+    try:
+        # Ищем кнопку сортировки "По умолчанию"
+        print("🔍 Ищем кнопку 'By default' или 'По умолчанию'...")
+        
+        # Основной селектор для кнопки сортировки
+        sort_button_selector = "div.rating-ranking-view[role='button']"
+        
+        try:
+            sort_button = driver.find_element(By.CSS_SELECTOR, sort_button_selector)
+            if sort_button.is_displayed():
+                button_text = sort_button.text.strip()
+                print(f"✅ Найден элемент: {sort_button_selector}")
+                print(f"   📱 Текст: '{button_text}'")
+                
+                # Проверяем, что это действительно кнопка сортировки
+                if any(keyword in button_text.lower() for keyword in ['по умолчанию', 'by default', 'умолчанию']):
+                    print("🎯 Подходящий элемент найден!")
+                else:
+                    print(f"⚠️ Элемент найден, но текст не соответствует ожидаемому: '{button_text}'")
+                    return False
+            else:
+                print(f"❌ Элемент найден, но не видим")
+                return False
+        except Exception as e:
+            print(f"❌ Кнопка сортировки не найдена: {e}")
+            return False
+        
+        # Кликаем по кнопке сортировки
+        try:
+            driver.execute_script("arguments[0].click();", sort_button)
+            print("🖱️ JavaScript клик по кнопке сортировки выполнен!")
+            time.sleep(1)  # Ждем появления выпадающего меню
+        except Exception as e:
+            print(f"❌ Ошибка клика по кнопке сортировки: {e}")
+            return False
+        
+        # Ищем опцию "По новизне" в выпадающем меню
+        print("📋 Ищем опцию 'New first' в выпадающем меню...")
+        
+        # Селектор для опций в выпадающем меню
+        option_selector = ".rating-ranking-view__popup-line"
+        
+        try:
+            options = driver.find_elements(By.CSS_SELECTOR, option_selector)
+            target_option = None
+            
+            for option in options:
+                if option.is_displayed():
+                    option_text = option.text.strip()
+                    print(f"✅ Найдена опция: {option_selector}")
+                    print(f"   📱 Текст опции: '{option_text}'")
+                    
+                    # Ищем опцию "По новизне" или "New first"
+                    if any(keyword in option_text.lower() for keyword in ['по новизне', 'new first', 'newest', 'новизне']):
+                        target_option = option
+                        print("🎯 Подходящая опция найдена!")
+                        break
+            
+            if target_option:
+                # Кликаем по опции "По новизне"
+                try:
+                    driver.execute_script("arguments[0].click();", target_option)
+                    print("🖱️ JavaScript клик по опции выполнен!")
+                    time.sleep(1)  # Ждем применения сортировки
+                except Exception as e:
+                    print(f"❌ Ошибка клика по опции: {e}")
+                    return False
+            else:
+                print("❌ Опция 'По новизне' не найдена в выпадающем меню")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Ошибка поиска опций в выпадающем меню: {e}")
+            return False
+        
+        print("📅 Сортировка 'New first' применена!")
+        
+        # Небольшая пауза для применения сортировки
+        import random
+        pause_time = random.uniform(1.0, 2.0)
+        print(f"⏳ Пауза после сортировки: {pause_time:.1f} сек...")
+        time.sleep(pause_time)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Общая ошибка в функции сортировки: {e}")
+        return False
+
+def handle_popup_if_available(driver):
+    """Обработка всплывающих окон если доступен модуль"""
+    if POPUP_HANDLER_AVAILABLE and handle_popup_simple:
+        try:
+            handle_popup_simple(driver, verbose=True)
+        except Exception as e:
+            print(f"⚠️ Ошибка обработки всплывающего окна: {e}")
+    else:
+        print("⚠️ Модуль обработки всплывающих окон недоступен")
+
+def scroll_page(driver):
+    """Прокрутка страницы вниз для загрузки дополнительных отзывов"""
+    try:
+        # Получаем высоту страницы до прокрутки
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        
+        # Прокручиваем страницу вниз
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        
+        # Ждем загрузки новых элементов
+        time.sleep(2)
+        
+        # Получаем новую высоту страницы
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        
+        # Возвращаем True, если страница увеличилась (загрузились новые элементы)
+        return new_height > last_height
+        
+    except Exception as e:
+        print(f"❌ Ошибка прокрутки страницы: {e}")
+        return False 
