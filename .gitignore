@@ -55,6 +55,7 @@ chrome_debug.log
 
 # JSON state files
 captcha_initial_state.json
+profiles_state.json
 
 # MacOS
 .DS_Store

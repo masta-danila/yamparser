@@ -1,0 +1,20 @@
+# Пример файла с URL-ами для параллельного парсинга
+# Комментарии начинаются с символа #
+# Каждый URL должен быть на отдельной строке
+
+# Рестораны
+https://yandex.ru/maps/org/la_bottega_siciliana/61925386633/reviews/
+https://yandex.ru/maps/org/novikov/1254142092/reviews/
+
+# Развлечения  
+https://yandex.ru/maps/org/tulskiy_gosudarstvenny_tsirk/1100333178/reviews/
+
+# Торговые центры
+https://yandex.ru/maps/org/okhotny_ryad/1064113182/reviews/
+
+# Можно добавить URL без /reviews/ - система автоматически исправит
+https://yandex.ru/maps/org/mcdonalds/1088698925/
+
+# Пустые строки игнорируются
+
+https://yandex.ru/maps/org/example_organization/123456789/reviews/ 

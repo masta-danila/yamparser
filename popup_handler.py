@@ -136,6 +136,9 @@ def find_not_now_button(driver):
             "//a[text()='Не сейчас' and string-length(@class) > 5]",  # Ссылки с длинными хэшированными классами
             "//a[text()='Не сейчас' and @class]",  # Любые ссылки с классами
             "//div[text()='Не сейчас' and contains(@class, 'na')]",  # Родительские div с классами
+            # НОВЫЕ ПАТТЕРНЫ ДЛЯ БАННЕРА ПРИЛОЖЕНИЯ:
+            "//a[text()='Не сейчас' and contains(@class, 'p1dba9a6a')]",  # Специфичный класс баннера
+            "//a[text()='Не сейчас' and ancestor::*[starts-with(@id, 'Y-A-')]]",  # Внутри баннера с ID Y-A-*
         ]
         
         for pattern in yandex_patterns:
@@ -154,6 +157,25 @@ def find_not_now_button(driver):
                         print(f"   ✅ Найдена кнопка Яндекс.Карт: 'Не сейчас' ({button.tag_name}) classes='{classes[:20]}...'")
     except Exception as e:
         print(f"   ⚠️ Ошибка поиска Яндекс.Карт: {e}")
+    
+    # 2.2. ПОИСК КНОПКИ ЗАКРЫТИЯ ПО ARIA-LABEL="Закрыть"
+    print("🔍 Поиск кнопки закрытия по aria-label...")
+    try:
+        close_buttons = driver.find_elements(By.XPATH, "//*[@aria-label='Закрыть']")
+        for button in close_buttons:
+            if button.is_displayed() and button.is_enabled():
+                if not any(b["element"] == button for b in found_buttons):
+                    classes = button.get_attribute("class") or ""
+                    found_buttons.append({
+                        "element": button,
+                        "method": "Aria-label: 'Закрыть'",
+                        "text": "Закрыть (крестик)",
+                        "tag": button.tag_name,
+                        "classes": classes
+                    })
+                    print(f"   ✅ Найдена кнопка закрытия: (крестик) ({button.tag_name}) classes='{classes[:20]}...'")
+    except Exception as e:
+        print(f"   ⚠️ Ошибка поиска кнопки закрытия: {e}")
     
     # 3. ПОИСК ПО ARIA-LABEL И TITLE
     print("🔍 Ищем кнопки по aria-label и title...")
@@ -207,6 +229,11 @@ def find_not_now_button(driver):
             "div[class*='gdpr-popup-v3-button']",
             "#gdpr-popup-v3-button-all",
             "[class*='gdpr-popup-v3-button_id_all']",
+            # НОВЫЕ СЕЛЕКТОРЫ ДЛЯ БАННЕРА ЯНДЕКС.КАРТ:
+            "a.p1dba9a6a",  # Кнопка "Не сейчас" в баннере приложения
+            "[id^='Y-A-'] a",  # Любые ссылки внутри баннера с ID Y-A-*
+            "[id^='Y-A-'] [aria-label='Закрыть']",  # Кнопка закрытия в баннере
+            "span[aria-label='Закрыть']",  # Кнопка-крестик
             # Cookie-специфичные селекторы
             "button[class*='cookie']",
             "div[class*='cookie']",
@@ -325,9 +352,14 @@ def detect_app_popup_simple(driver):
         "Download the app",
         "Install the app",
         "Get our app",
-        "Try our app"
+        "Try our app",
+        # НОВЫЕ ИНДИКАТОРЫ ДЛЯ ЯНДЕКС.КАРТ:
+        "В приложении Яндекс Карт",
+        "Ищите адреса и выбирайте места",
+        "даже без интернета"
     ]
     
+    # 1. Поиск по тексту индикаторов
     for indicator in popup_indicators:
         try:
             xpath = f"//*[contains(text(), '{indicator}')]"
@@ -337,6 +369,16 @@ def detect_app_popup_simple(driver):
                 return True
         except:
             continue
+    
+    # 2. Поиск баннера Яндекс.Карт по ID
+    try:
+        banners = driver.find_elements(By.CSS_SELECTOR, "[id^='Y-A-']")
+        for banner in banners:
+            if banner.is_displayed():
+                print(f"🎯 Найден баннер Яндекс.Карт: ID={banner.get_attribute('id')}")
+                return True
+    except:
+        pass
     
     return False
 

@@ -19,6 +19,7 @@ import sys
 import re
 from datetime import datetime
 import random
+import threading
 
 # Импорт модуля работы с базой данных
 try:
@@ -31,30 +32,42 @@ except ImportError:
 
 # Импорт функций решения CAPTCHA
 try:
-    from selenium_captcha_solver import detect_captcha as captcha_detect, solve_captcha as captcha_solve
+    from captcha_solver import detect_captcha as captcha_detect, solve_captcha as captcha_solve
     CAPTCHA_SOLVER_AVAILABLE = True
     print("✅ Модуль решения CAPTCHA подключен")
 except ImportError:
     CAPTCHA_SOLVER_AVAILABLE = False
-    print("⚠️ Модуль selenium_captcha_solver.py не найден - CAPTCHA будет обрабатываться базовым способом")
+    print("⚠️ Модуль captcha_solver.py не найден - CAPTCHA будет обрабатываться базовым способом")
 
 # Импорт менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)
 try:
-    from proxy_manager_seleniumwire import ProxyManagerSeleniumWire
+    from proxy_manager import ProxyManagerSeleniumWire
     PROXY_AVAILABLE = True
     print("✅ Модуль рабочих прокси (seleniumwire) подключен")
 except ImportError:
     PROXY_AVAILABLE = False
-    print("⚠️ Модуль proxy_manager_seleniumwire.py не найден - прокси будут недоступны")
+    print("⚠️ Модуль proxy_manager.py не найден - прокси будут недоступны")
 
 # Импорт упрощенного обработчика всплывающих окон приложения
 try:
-    from simple_popup_handler import handle_popup_simple
+    from popup_handler import handle_popup_simple
     POPUP_HANDLER_AVAILABLE = True
     print("✅ Модуль простой обработки всплывающих окон подключен")
 except ImportError:
     POPUP_HANDLER_AVAILABLE = False
-    print("⚠️ Модуль simple_popup_handler.py не найден - всплывающие окна не будут обрабатываться автоматически")
+    print("⚠️ Модуль popup_handler.py не найден - всплывающие окна не будут обрабатываться автоматически")
+
+# Импорт умного менеджера профилей
+try:
+    from profile_manager import SimpleProfileManager
+    PROFILE_MANAGER_AVAILABLE = True
+    print("✅ Модуль простого управления профилями подключен")
+except ImportError:
+    PROFILE_MANAGER_AVAILABLE = False
+    print("⚠️ Модуль profile_manager.py не найден - будет использоваться простое создание профилей")
+
+# Глобальная блокировка для создания драйверов
+_driver_creation_lock = threading.Lock()
 
 def setup_driver(device_type="desktop", proxy_manager=None):
     """Настройка драйвера для получения отзывов с поддержкой рабочих прокси (seleniumwire)"""
@@ -72,25 +85,51 @@ def setup_driver(device_type="desktop", proxy_manager=None):
     use_seleniumwire = False
     
     if proxy_manager and PROXY_AVAILABLE and SELENIUMWIRE_AVAILABLE:
-        current_proxy = proxy_manager.get_next_proxy()
+        current_proxy = proxy_manager.get_random_proxy()  # Случайный прокси вместо последовательного
         if current_proxy:
             # Используем рабочий метод seleniumwire
             chrome_options, proxy_options = proxy_manager.configure_seleniumwire_proxy(current_proxy)
             options = chrome_options  # Заменяем на настроенные опции
             use_seleniumwire = True
-            print(f"🌐 Используется рабочий прокси (seleniumwire): {current_proxy['ip']}:{current_proxy['port']}")
+            print(f"🌐 Используется случайный прокси (seleniumwire): {current_proxy['ip']}:{current_proxy['port']}")
         else:
             print("⚠️ Нет доступных прокси, используется прямое соединение")
     elif proxy_manager and PROXY_AVAILABLE and not SELENIUMWIRE_AVAILABLE:
         print("⚠️ Прокси менеджер доступен, но seleniumwire не установлен")
         print("💡 Установите: pip install selenium-wire")
     
-    # Создаем папку для профиля с уникальным timestamp
-    import time
-    timestamp = int(time.time() * 1000)  # Миллисекунды для уникальности
-    user_data_dir = os.path.join(os.getcwd(), f"reviews_profile_{timestamp}")
-    os.makedirs(user_data_dir, exist_ok=True)
-    options.add_argument(f"--user-data-dir={user_data_dir}")
+    # Умное управление профилями
+    user_data_dir = None
+    profile_manager = None
+    
+    if PROFILE_MANAGER_AVAILABLE:
+        try:
+            profile_manager = SimpleProfileManager()
+            user_data_dir, is_new_profile = profile_manager.get_available_profile(device_type)
+            
+            if user_data_dir:
+                if is_new_profile:
+                    print(f"🆕 Создан новый профиль для {device_type}")
+                else:
+                    print(f"♻️ Переиспользуется существующий профиль для {device_type}")
+            else:
+                print(f"🖥️ Desktop режим: профили не используются")
+        except Exception as e:
+            print(f"⚠️ Ошибка менеджера профилей: {e}")
+            print("🔄 Переключаемся на простое создание профилей...")
+            profile_manager = None
+    
+    # Fallback: простое создание профилей (только для mobile)
+    if not user_data_dir and device_type == "mobile":
+        import time
+        timestamp = int(time.time() * 1000)  # Миллисекунды для уникальности
+        user_data_dir = os.path.join(os.getcwd(), f"reviews_profile_{timestamp}")
+        os.makedirs(user_data_dir, exist_ok=True)
+        print(f"📁 Создан простой профиль: {os.path.basename(user_data_dir)}")
+    
+    # Добавляем профиль только если он есть (mobile)
+    if user_data_dir:
+        options.add_argument(f"--user-data-dir={user_data_dir}")
     
     # Если нужна мобильная версия
     if device_type == "mobile":
@@ -107,36 +146,56 @@ def setup_driver(device_type="desktop", proxy_manager=None):
     if use_seleniumwire and proxy_options and SELENIUMWIRE_AVAILABLE:
         print("🔧 Создаем драйвер с seleniumwire и прокси...")
         try:
-            driver = wiredriver.Chrome(
-                options=options,
-                seleniumwire_options=proxy_options
-            )
-            # Убираем признаки автоматизации
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            print("✅ Драйвер с рабочими прокси создан успешно!")
-            return driver
+            with _driver_creation_lock:
+                driver = wiredriver.Chrome(
+                    options=options,
+                    seleniumwire_options=proxy_options
+                )
+                # Убираем признаки автоматизации
+                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                
+                # Сохраняем информацию о профиле в драйвере для последующего освобождения
+                if PROFILE_MANAGER_AVAILABLE and profile_manager and user_data_dir:
+                    driver._profile_info = {
+                        'profile_path': user_data_dir,
+                        'profile_manager': profile_manager
+                    }
+                
+                print("✅ Драйвер с рабочими прокси создан успешно!")
+                return driver
         except Exception as e:
             print(f"❌ Ошибка создания драйвера с прокси: {e}")
             print("🔄 Переключаемся на обычный драйвер...")
     
     # Обычный драйвер (без прокси или если seleniumwire недоступен)
     print("🔧 Создаем обычный драйвер...")
-    driver_path = ChromeDriverManager().install()
-    driver_dir = os.path.dirname(driver_path)
-    actual_driver = os.path.join(driver_dir, "chromedriver")
     
-    if os.path.exists(actual_driver):
-        # Исправляем права доступа
-        current_permissions = os.stat(actual_driver).st_mode
-        if not (current_permissions & stat.S_IXUSR):
-            print("🔧 Исправляем права доступа...")
-            os.chmod(actual_driver, current_permissions | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    # Используем блокировку для предотвращения конфликтов при создании драйвера
+    with _driver_creation_lock:
+        driver_path = ChromeDriverManager().install()
+        driver_dir = os.path.dirname(driver_path)
+        actual_driver = os.path.join(driver_dir, "chromedriver")
         
-        service = Service(actual_driver)
-        driver = webdriver.Chrome(service=service, options=options)
-        return driver
-    else:
-        raise Exception("ChromeDriver не найден!")
+        if os.path.exists(actual_driver):
+            # Исправляем права доступа
+            current_permissions = os.stat(actual_driver).st_mode
+            if not (current_permissions & stat.S_IXUSR):
+                print("🔧 Исправляем права доступа...")
+                os.chmod(actual_driver, current_permissions | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            
+            service = Service(actual_driver)
+            driver = webdriver.Chrome(service=service, options=options)
+            
+            # Сохраняем информацию о профиле в драйвере для последующего освобождения
+            if PROFILE_MANAGER_AVAILABLE and profile_manager and user_data_dir:
+                driver._profile_info = {
+                    'profile_path': user_data_dir,
+                    'profile_manager': profile_manager
+                }
+            
+            return driver
+        else:
+            raise Exception("ChromeDriver не найден!")
 
 def extract_card_id_from_url(url: str) -> str:
     """Извлечь ID карточки из URL Яндекс Карт"""
@@ -1871,6 +1930,9 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
     print(f"🚀 Настройка Selenium драйвера ({device_type})...")
     driver = setup_driver(device_type, proxy_manager)
     
+    # Сохраняем информацию о профиле для освобождения в finally
+    profile_info = getattr(driver, '_profile_info', None) if driver else None
+    
     if not driver:
         print("❌ Не удалось запустить браузер")
         return None
@@ -2011,6 +2073,15 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         }
         
     finally:
+        # Освобождаем профиль
+        if profile_info and PROFILE_MANAGER_AVAILABLE:
+            try:
+                profile_manager = profile_info['profile_manager']
+                profile_path = profile_info['profile_path']
+                profile_manager.release_profile(profile_path)
+            except Exception as e:
+                print(f"⚠️ Ошибка освобождения профиля: {e}")
+        
         # Закрываем браузер
         if driver:
             print("🔒 Браузер закрыт.")
@@ -2018,8 +2089,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
 
 def main():
     """Основная функция"""
-    # URL по умолчанию - страница Адверт Про
-    default_url = "https://yandex.ru/maps/org/kombinat_sotsialnogo_pitaniya/1111195101/reviews/?ll=37.597909%2C54.210244&z=17.63"
+    # URL по умолчанию - страница отзывов Тульского цирка
     default_url = "https://yandex.ru/maps/org/tulskiy_gosudarstvenny_tsirk/1100333178/reviews/?ll=37.626170%2C54.189593&z=17.63"
 
     
