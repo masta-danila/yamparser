@@ -57,21 +57,16 @@ except ImportError:
     POPUP_HANDLER_AVAILABLE = False
     print("⚠️ Модуль popup_handler.py не найден - всплывающие окна не будут обрабатываться автоматически")
 
-# Импорт умного менеджера профилей
-try:
-    from profile_manager import SimpleProfileManager
-    PROFILE_MANAGER_AVAILABLE = True
-    print("✅ Модуль простого управления профилями подключен")
-except ImportError:
-    PROFILE_MANAGER_AVAILABLE = False
-    print("⚠️ Модуль profile_manager.py не найден - будет использоваться простое создание профилей")
+# Модуль управления профилями больше не используется - создаем временные профили
 
 # Глобальная блокировка для создания драйверов
 _driver_creation_lock = threading.Lock()
 
-def setup_driver(device_type="desktop", proxy_manager=None):
+def setup_driver(device_type="desktop", proxy_manager=None, profile_path=None):
     """Настройка драйвера для получения отзывов с поддержкой рабочих прокси (seleniumwire)"""
-    print(f"🚀 Настройка Selenium драйвера ({device_type})...")
+    import threading
+    thread_id = threading.current_thread().ident
+    print(f"🚀 Настройка Selenium драйвера ({device_type}) в потоке {thread_id}...")
     
     # Настройки браузера
     options = Options()
@@ -98,53 +93,53 @@ def setup_driver(device_type="desktop", proxy_manager=None):
         print("⚠️ Прокси менеджер доступен, но seleniumwire не установлен")
         print("💡 Установите: pip install selenium-wire")
     
-    # Умное управление профилями
+    # Управление профилями
     user_data_dir = None
-    profile_manager = None
     
-    if PROFILE_MANAGER_AVAILABLE:
-        try:
-            profile_manager = SimpleProfileManager()
-            user_data_dir, is_new_profile = profile_manager.get_available_profile(device_type)
-            
-            if user_data_dir:
-                if is_new_profile:
-                    print(f"🆕 Создан новый профиль для {device_type}")
-                else:
-                    print(f"♻️ Переиспользуется существующий профиль для {device_type}")
-            else:
-                print(f"🖥️ Desktop режим: профили не используются")
-        except Exception as e:
-            print(f"⚠️ Ошибка менеджера профилей: {e}")
-            print("🔄 Переключаемся на простое создание профилей...")
-            profile_manager = None
-    
-    # Fallback: простое создание профилей (только для mobile)
-    if not user_data_dir and device_type == "mobile":
-        import time
-        timestamp = int(time.time() * 1000)  # Миллисекунды для уникальности
-        user_data_dir = os.path.join(os.getcwd(), f"reviews_profile_{timestamp}")
-        os.makedirs(user_data_dir, exist_ok=True)
-        print(f"📁 Создан простой профиль: {os.path.basename(user_data_dir)}")
+    # Если передан готовый профиль, используем его
+    if profile_path:
+        user_data_dir = profile_path
+        print(f"📁 Используется переданный профиль: {os.path.basename(profile_path)}")
+    elif device_type == "mobile":
+        # Создание временного профиля если не передан готовый
+        import tempfile
+        user_data_dir = tempfile.mkdtemp(prefix="chrome_profile_temp_")
+        print(f"📁 Создан временный профиль: {os.path.basename(user_data_dir)}")
+    else:
+        # Desktop режим - без профилей
+        user_data_dir = None
+        print(f"🖥️ Desktop режим: профили не используются")
     
     # Добавляем профиль только если он есть (mobile)
     if user_data_dir:
         options.add_argument(f"--user-data-dir={user_data_dir}")
     
     # Если нужна мобильная версия
+    mobile_device_size = None
     if device_type == "mobile":
+        # Определяем размеры устройства (можно расширить для разных устройств)
+        device_width, device_height = 390, 844  # iPhone 13 по умолчанию
+        
         mobile_emulation = {
-            "deviceMetrics": {"width": 390, "height": 844, "pixelRatio": 3.0},
+            "deviceMetrics": {"width": device_width, "height": device_height, "pixelRatio": 3.0},
             "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
         }
         options.add_experimental_option("mobileEmulation", mobile_emulation)
-        print("📱 Используем мобильную эмуляцию")
+        mobile_device_size = (device_width, device_height)  # Сохраняем размер для настройки окна
+        
+        # Устанавливаем размер окна сразу при создании браузера
+        window_width = device_width + 50
+        window_height = device_height + 150
+        options.add_argument(f"--window-size={window_width},{window_height}")
+        print(f"📱 Используем мобильную эмуляцию: {device_width}x{device_height}")
+        print(f"📏 Размер окна будет установлен при создании: {window_width}x{window_height}")
     
     print(f"📁 Профиль: {user_data_dir}")
     
     # Создаем драйвер (с поддержкой seleniumwire для прокси)
     if use_seleniumwire and proxy_options and SELENIUMWIRE_AVAILABLE:
         print("🔧 Создаем драйвер с seleniumwire и прокси...")
+        driver = None
         try:
             with _driver_creation_lock:
                 driver = wiredriver.Chrome(
@@ -154,17 +149,17 @@ def setup_driver(device_type="desktop", proxy_manager=None):
                 # Убираем признаки автоматизации
                 driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
                 
-                # Сохраняем информацию о профиле в драйвере для последующего освобождения
-                if PROFILE_MANAGER_AVAILABLE and profile_manager and user_data_dir:
-                    driver._profile_info = {
-                        'profile_path': user_data_dir,
-                        'profile_manager': profile_manager
-                    }
-                
-                print("✅ Драйвер с рабочими прокси создан успешно!")
+                print(f"✅ Драйвер с рабочими прокси создан успешно в потоке {thread_id}!")
                 return driver
         except Exception as e:
             print(f"❌ Ошибка создания драйвера с прокси: {e}")
+            # Закрываем неудачно созданный драйвер, если он существует
+            if driver:
+                try:
+                    driver.quit()
+                    print("🔒 Неудачный драйвер закрыт")
+                except:
+                    pass
             print("🔄 Переключаемся на обычный драйвер...")
     
     # Обычный драйвер (без прокси или если seleniumwire недоступен)
@@ -184,14 +179,8 @@ def setup_driver(device_type="desktop", proxy_manager=None):
                 os.chmod(actual_driver, current_permissions | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
             
             service = Service(actual_driver)
+            print(f"🔧 Создаем обычный драйвер в потоке {thread_id}...")
             driver = webdriver.Chrome(service=service, options=options)
-            
-            # Сохраняем информацию о профиле в драйвере для последующего освобождения
-            if PROFILE_MANAGER_AVAILABLE and profile_manager and user_data_dir:
-                driver._profile_info = {
-                    'profile_path': user_data_dir,
-                    'profile_manager': profile_manager
-                }
             
             return driver
         else:
@@ -1879,7 +1868,7 @@ def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) 
         print(f"❌ Ошибка проверки checkpoint: {e}")
         return False
 
-def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True):
+def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None):
     """
     Основная функция для получения отзывов с Яндекс Карт
     
@@ -1890,6 +1879,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         max_days_back: максимальное количество дней назад для первичного парсинга
         max_reviews_limit: максимальное количество отзывов для парсинга
         use_proxy: использовать ли прокси (по умолчанию True)
+        profile_path: путь к профилю браузера (если передан, то будет использован вместо создания нового)
     
     Returns:
         dict: результаты парсинга
@@ -1928,10 +1918,10 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
     
     # Настройка и запуск браузера с поддержкой прокси
     print(f"🚀 Настройка Selenium драйвера ({device_type})...")
-    driver = setup_driver(device_type, proxy_manager)
+    driver = setup_driver(device_type, proxy_manager, profile_path)
     
     # Сохраняем информацию о профиле для освобождения в finally
-    profile_info = getattr(driver, '_profile_info', None) if driver else None
+    # Больше не сохраняем информацию о профиле в драйвере
     
     if not driver:
         print("❌ Не удалось запустить браузер")
@@ -2073,16 +2063,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         }
         
     finally:
-        # Освобождаем профиль
-        if profile_info and PROFILE_MANAGER_AVAILABLE:
-            try:
-                profile_manager = profile_info['profile_manager']
-                profile_path = profile_info['profile_path']
-                profile_manager.release_profile(profile_path)
-            except Exception as e:
-                print(f"⚠️ Ошибка освобождения профиля: {e}")
-        
-        # Закрываем браузер
+        # Закрываем браузер (профили удаляются автоматически в parallel_parser.py)
         if driver:
             print("🔒 Браузер закрыт.")
             driver.quit()
@@ -2090,7 +2071,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
 def main():
     """Основная функция"""
     # URL по умолчанию - страница отзывов Тульского цирка
-    default_url = "https://yandex.ru/maps/org/tulskiy_gosudarstvenny_tsirk/1100333178/reviews/?ll=37.626170%2C54.189593&z=17.63"
+    default_url = "https://yandex.ru/maps/org/la_bottega_siciliana/61925386633/reviews/"
 
     
     # ============= НАСТРОЙКИ ПАРСИНГА =============
