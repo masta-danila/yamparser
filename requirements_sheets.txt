@@ -1,0 +1,12 @@
+# Зависимости для работы с Google Sheets
+pandas>=1.5.0
+gspread>=5.0.0
+google-auth>=2.10.0
+google-auth-oauthlib>=0.5.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.50.0
+openpyxl>=3.0.0
+
+# Дополнительные утилиты
+beautifulsoup4>=4.11.0
+lxml>=4.9.0 

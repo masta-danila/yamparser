@@ -65,8 +65,6 @@ class GoogleSheetsReader:
         else:
             raise ValueError("Не удалось извлечь ID таблицы из URL")
     
-
-    
     def get_all_sheet_names_api(self, spreadsheet_id: str) -> List[str]:
         """Получение списка всех листов через Google Sheets API"""
         if not self.service:
@@ -173,14 +171,14 @@ class GoogleSheetsReader:
             
             print(error_msg)
             raise ValueError(f"Лист '{sheet_name}' не содержит все обязательные колонки")
-        
-        print(f"✅ Структура листа '{sheet_name}' корректна - все {len(required_columns)} колонок найдены")
+        else:
+            print(f"✅ Все обязательные колонки найдены в листе '{sheet_name}'")
     
     def check_missing_columns(self, df: pd.DataFrame, sheet_name: str) -> List[str]:
-        """Проверка недостающих колонок без вызова исключения"""
+        """Проверка недостающих колонок без исключения"""
         required_columns = [
             "Ссылка",
-            "Текст отзыва",
+            "Текст отзыва", 
             "Дата публикации",
             "Статус"
         ]
@@ -195,57 +193,29 @@ class GoogleSheetsReader:
         return missing_columns
     
     def check_review_data(self, df: pd.DataFrame, sheet_name: str):
-        """Проверка данных в листе: проверка заполненности обязательных полей только в строках с ссылками"""
+        """Проверка данных отзывов в листе"""
         if df.empty:
+            print(f"⚠️ Лист '{sheet_name}' пуст")
             return
         
-        # Проверяем наличие нужных колонок
-        required_filled_columns = ['Ссылка', 'Текст отзыва', 'Статус']
-        missing_cols = [col for col in required_filled_columns if col not in df.columns]
+        # Проверяем количество строк
+        total_rows = len(df)
+        print(f"📊 Всего строк в листе '{sheet_name}': {total_rows}")
         
-        if missing_cols:
-            print(f"⚠️ В листе '{sheet_name}' отсутствуют колонки для проверки данных: {missing_cols}")
-            return
+        # Проверяем заполненность ключевых колонок
+        if 'Ссылка' in df.columns:
+            non_empty_links = df['Ссылка'].notna().sum()
+            print(f"🔗 Строк с заполненными ссылками: {non_empty_links}")
         
-        # Ищем строки с заполненными ссылками, но незаполненными другими полями
-        problem_rows = []
-        rows_with_links = 0
+        if 'Текст отзыва' in df.columns:
+            non_empty_reviews = df['Текст отзыва'].notna().sum()
+            print(f"📝 Строк с заполненными отзывами: {non_empty_reviews}")
         
-        for index, row in df.iterrows():
-            status = str(row['Статус']).strip()
-            link = str(row['Ссылка']).strip()
-            review_text = str(row['Текст отзыва']).strip()
-            
-            # Проверяем только строки с заполненными ссылками
-            if link and link != 'nan' and link != '':
-                rows_with_links += 1
-                empty_fields = []
-                
-                # Проверяем заполненность других обязательных полей
-                if not review_text or review_text == 'nan' or review_text == '':
-                    empty_fields.append('Текст отзыва')
-                    
-                if not status or status == 'nan' or status == '':
-                    empty_fields.append('Статус')
-                
-                # Если есть незаполненные поля, добавляем в проблемные строки
-                if empty_fields:
-                    problem_rows.append({
-                        'row': index + 2,  # +2 потому что индекс с 0 + заголовок
-                        'link': link,
-                        'empty_fields': empty_fields
-                    })
-        
-        # Выводим результаты проверки
-        if rows_with_links == 0:
-            print(f"ℹ️ В листе '{sheet_name}' нет строк с заполненными ссылками")
-        elif problem_rows:
-            print(f"⚠️ ПРЕДУПРЕЖДЕНИЕ: В листе '{sheet_name}' найдено {len(problem_rows)} строк с ссылками, но незаполненными обязательными полями:")
-            for problem in problem_rows:
-                empty_fields_str = ', '.join(problem['empty_fields'])
-                print(f"   🔗 Строка {problem['row']}: {problem['link']} - не заполнено: {empty_fields_str}")
-        else:
-            print(f"✅ В листе '{sheet_name}' все строки с ссылками ({rows_with_links}) имеют заполненные обязательные поля")
+        if 'Статус' in df.columns:
+            status_counts = df['Статус'].value_counts()
+            print(f"📈 Статистика по статусам:")
+            for status, count in status_counts.items():
+                print(f"   • {status}: {count}")
     
     def read_all_sheets_api(self, spreadsheet_url: str, stop_on_validation_error: bool = True) -> Dict[str, pd.DataFrame]:
         """Чтение всех листов из одной Google Sheets таблицы через API"""
@@ -311,133 +281,6 @@ class GoogleSheetsReader:
         print(f"\n🎉 Успешно прочитано {len(all_data)} листов")
         return all_data
     
-    def process_multiple_spreadsheets(self, spreadsheet_urls: List[str], stop_on_validation_error: bool = True) -> Dict[str, Dict[str, pd.DataFrame]]:
-        """Обработка нескольких Google Sheets таблиц"""
-        if not spreadsheet_urls:
-            print("❌ Не предоставлено ни одной ссылки на таблицу")
-            return {}
-        
-        print(f"🚀 Начинаем обработку {len(spreadsheet_urls)} таблиц")
-        print("=" * 60)
-        
-        all_spreadsheets_data = {}
-        total_sheets = 0
-        total_rows = 0
-        
-        for i, url in enumerate(spreadsheet_urls, 1):
-            try:
-                spreadsheet_id = self.extract_spreadsheet_id(url)
-                print(f"\n📋 ТАБЛИЦА {i}/{len(spreadsheet_urls)}: {spreadsheet_id}")
-                print("-" * 50)
-                
-                # Читаем все листы из текущей таблицы
-                spreadsheet_data = self.read_all_sheets_api(url, stop_on_validation_error)
-                
-                if spreadsheet_data:
-                    all_spreadsheets_data[spreadsheet_id] = spreadsheet_data
-                    sheets_count = len(spreadsheet_data)
-                    rows_count = sum(len(df) for df in spreadsheet_data.values())
-                    total_sheets += sheets_count
-                    total_rows += rows_count
-                    
-                    print(f"✅ Таблица {spreadsheet_id}: {sheets_count} листов, {rows_count} строк")
-                else:
-                    print(f"⚠️ Таблица {spreadsheet_id}: нет данных для обработки")
-                    
-            except Exception as e:
-                print(f"❌ Ошибка обработки таблицы {i}: {e}")
-                continue
-        
-        # Итоговая статистика
-        print(f"\n🎯 ИТОГОВАЯ СТАТИСТИКА:")
-        print("=" * 60)
-        print(f"📊 Обработано таблиц: {len(all_spreadsheets_data)}/{len(spreadsheet_urls)}")
-        print(f"📄 Всего листов: {total_sheets}")
-        print(f"📝 Всего строк: {total_rows}")
-        
-        if all_spreadsheets_data:
-            print(f"\n📋 Детальная статистика по таблицам:")
-            for spreadsheet_id, sheets_data in all_spreadsheets_data.items():
-                sheets_count = len(sheets_data)
-                rows_count = sum(len(df) for df in sheets_data.values())
-                print(f"  📊 {spreadsheet_id}: {sheets_count} листов, {rows_count} строк")
-        
-        return all_spreadsheets_data
-    
-    def read_sheet_gspread(self, spreadsheet_url: str, sheet_name: str) -> pd.DataFrame:
-        """Чтение конкретного листа через gspread"""
-        if not self.gc:
-            raise ValueError("gspread не настроен. Укажите credentials_file")
-        
-        try:
-            # Открываем таблицу
-            spreadsheet = self.gc.open_by_url(spreadsheet_url)
-            
-            # Открываем конкретный лист
-            worksheet = spreadsheet.worksheet(sheet_name)
-            
-            # Получаем все данные
-            data = worksheet.get_all_records()
-            
-            if not data:
-                print(f"⚠️ Лист '{sheet_name}' пуст")
-                return pd.DataFrame()
-            
-            df = pd.DataFrame(data)
-            
-            # Валидация колонок
-            self.validate_columns(df, sheet_name)
-            
-            print(f"✅ Загружено {len(df)} строк с листа '{sheet_name}'")
-            
-            return df
-            
-        except Exception as e:
-            print(f"❌ Ошибка чтения листа '{sheet_name}': {e}")
-            return pd.DataFrame()
-    
-    def read_all_sheets_gspread(self, spreadsheet_url: str) -> Dict[str, pd.DataFrame]:
-        """Чтение всех листов из Google Sheets через gspread"""
-        if not self.gc:
-            raise ValueError("gspread не настроен. Укажите credentials_file")
-        
-        try:
-            print(f"📊 Начинаем чтение всех листов через gspread")
-            
-            # Открываем таблицу
-            spreadsheet = self.gc.open_by_url(spreadsheet_url)
-            
-            # Получаем список всех листов
-            worksheets = spreadsheet.worksheets()
-            
-            print(f"📄 Найдено листов: {len(worksheets)}")
-            
-            all_data = {}
-            for worksheet in worksheets:
-                sheet_name = worksheet.title
-                print(f"\n📖 Читаем лист: {sheet_name}")
-                
-                try:
-                    data = worksheet.get_all_records()
-                    
-                    if data:
-                        df = pd.DataFrame(data)
-                        all_data[sheet_name] = df
-                        print(f"✅ Загружено {len(df)} строк")
-                    else:
-                        print(f"⚠️ Лист пуст")
-                        
-                except Exception as e:
-                    print(f"❌ Ошибка чтения листа '{sheet_name}': {e}")
-                    continue
-            
-            print(f"\n🎉 Успешно прочитано {len(all_data)} листов")
-            return all_data
-            
-        except Exception as e:
-            print(f"❌ Ошибка при чтении таблицы: {e}")
-            return {}
-    
     def save_to_excel(self, data: Dict[str, pd.DataFrame], filename: str = 'google_sheets_data.xlsx'):
         """Сохранение данных в Excel файл"""
         if not data:
@@ -454,60 +297,4 @@ class GoogleSheetsReader:
             print(f"💾 Данные сохранены в Excel файл: {filename}")
             
         except Exception as e:
-            print(f"❌ Ошибка сохранения в Excel: {e}")
-
-
-def main():
-    """Основная функция для демонстрации использования"""
-    
-    # Список URL таблиц для обработки
-    SPREADSHEET_URLS = [
-        "https://docs.google.com/spreadsheets/d/1prLF8cF6wpdGkOdgDyZLZ8MHbG0NbdfN_rVQ-ilYX3Y/edit?gid=1731264931#gid=1731264931",
-        "https://docs.google.com/spreadsheets/d/10v9VFoD6g-RRLLs_nG4PksfV_ZVLL5klxeTOD3WCrok/edit?gid=1998608722#gid=1998608722"
-    ]
-    
-    print("🚀 Google Sheets Reader - Обработка нескольких таблиц")
-    print("=" * 60)
-    
-    # Авторизованное чтение нескольких таблиц
-    CREDENTIALS_FILE = 'credentials.json'  # Путь к вашему файлу
-    
-    if os.path.exists(CREDENTIALS_FILE):
-        print(f"🔑 Используем учетные данные: {CREDENTIALS_FILE}")
-        
-        # Создаем читатель с авторизацией
-        auth_reader = GoogleSheetsReader(CREDENTIALS_FILE)
-        
-        # Обрабатываем несколько таблиц (не останавливаемся на ошибках валидации)
-        all_spreadsheets_data = auth_reader.process_multiple_spreadsheets(SPREADSHEET_URLS, stop_on_validation_error=False)
-        
-        if all_spreadsheets_data:
-            print(f"\n💾 Данные успешно обработаны из {len(all_spreadsheets_data)} таблиц")
-            # Сохранение данных отключено
-            # auth_reader.save_to_excel(all_data_api)
-        else:
-            print("❌ Не удалось прочитать данные ни из одной таблицы")
-    else:
-        print(f"⚠️ Файл учетных данных не найден: {CREDENTIALS_FILE}")
-
-
-def process_custom_spreadsheets(spreadsheet_urls: List[str], credentials_file: str = 'credentials.json'):
-    """Функция для обработки пользовательского списка таблиц"""
-    if not os.path.exists(credentials_file):
-        print(f"❌ Файл учетных данных не найден: {credentials_file}")
-        return
-    
-    print(f"🚀 Обработка {len(spreadsheet_urls)} пользовательских таблиц")
-    print("=" * 60)
-    
-    # Создаем читатель с авторизацией
-    reader = GoogleSheetsReader(credentials_file)
-    
-    # Обрабатываем таблицы
-    results = reader.process_multiple_spreadsheets(spreadsheet_urls)
-    
-    return results
-
-
-if __name__ == "__main__":
-    main() 
+            print(f"❌ Ошибка сохранения в Excel: {e}") 

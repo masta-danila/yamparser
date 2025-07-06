@@ -7,6 +7,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import re
+import os
+from thread_logger import thread_print
 
 # Импорт функций решения CAPTCHA
 try:
@@ -23,6 +25,48 @@ except ImportError:
     POPUP_HANDLER_AVAILABLE = False
     handle_popup_simple = None
 
+def prepare_reviews_url(url: str) -> str:
+    """
+    Подготавливает URL для парсинга отзывов
+    Если в URL нет /reviews/, то:
+    1. Находит ID организации
+    2. Обрезает всё что после ID (включая GET параметры и другие пути)
+    3. Добавляет /reviews/ в конец
+    
+    Args:
+        url: Исходный URL
+        
+    Returns:
+        Нормализованный URL с /reviews/
+    """
+    if not url:
+        return url
+    
+    url = url.strip()
+    
+    # Проверяем, есть ли уже /reviews/ в URL
+    if '/reviews/' in url or '/reviews' in url:
+        thread_print(f"✅ URL уже содержит /reviews/: {url}")
+        return url
+    
+    # Проверяем, что это URL Яндекс.Карт с ID организации
+    # Паттерн ищет /org/название/ID и всё что после ID (включая GET параметры)
+    org_pattern = r'(https?://[^/]+/[^/]+/org/[^/]+/\d+)'
+    match = re.search(org_pattern, url)
+    
+    if match:
+        # Получаем базовую часть URL до ID включительно
+        base_url = match.group(1)
+        
+        # Добавляем /reviews/
+        normalized_url = base_url + '/reviews/'
+        
+        thread_print(f"🔧 URL нормализован: {url} → {normalized_url}")
+        return normalized_url
+    
+    thread_print(f"⚠️ URL не соответствует формату Яндекс.Карт: {url}")
+    return url
+
 def extract_card_id_from_url(url: str) -> str:
     """Извлечь ID карточки из URL Яндекс Карт"""
     # Паттерн для поиска ID карточки в URL
@@ -32,10 +76,10 @@ def extract_card_id_from_url(url: str) -> str:
     
     if match:
         card_id = match.group(1)
-        print(f"🆔 Извлечен ID карточки: {card_id}")
+        thread_print(f"🆔 Извлечен ID карточки: {card_id}")
         return card_id
     else:
-        print(f"❌ Не удалось извлечь ID карточки из URL: {url}")
+        thread_print(f"❌ Не удалось извлечь ID карточки из URL: {url}")
         return None
 
 def get_page_info(driver):
@@ -46,8 +90,8 @@ def get_page_info(driver):
         "timestamp": time.time()
     }
     
-    print(f"🌐 URL: {info['url']}")
-    print(f"📄 Заголовок: {info['title']}")
+    thread_print(f"🌐 URL: {info['url']}")
+    thread_print(f"📄 Заголовок: {info['title']}")
     
     return info
 
@@ -101,37 +145,101 @@ def check_for_captcha(driver):
     
     return False
 
-def handle_captcha_automatically(driver):
-    """Автоматическое решение CAPTCHA с использованием функций из captcha_solver.py"""
-    print("🤖 Запускаем автоматическое решение CAPTCHA...")
+def handle_captcha_with_proxy_restart(driver, proxy_manager, device_type="desktop", profile_path=None):
+    """
+    Обработка капчи с переключением прокси и созданием нового профиля
     
-    if not CAPTCHA_SOLVER_AVAILABLE:
-        print("❌ Модуль решения CAPTCHA недоступен")
-        return False
+    Args:
+        driver: текущий драйвер с капчей
+        proxy_manager: менеджер прокси
+        device_type: тип устройства
+        profile_path: путь к профилю (для удаления старого)
+    
+    Returns:
+        Новый драйвер с другим прокси и профилем или None
+    """
+    print("🤖 Обнаружена капча! Переключаем на новый прокси и профиль...")
     
     try:
-        # Используем продвинутую детекцию CAPTCHA
-        captcha_found, captcha_element = captcha_detect(driver)
+        # Импортируем функцию переключения прокси из driver_manager
+        from driver_manager import handle_captcha_with_proxy_switching
         
-        if not captcha_found:
-            print("✅ CAPTCHA не обнаружена продвинутым детектором")
-            return True
+        # Вызываем функцию переключения прокси
+        new_driver = handle_captcha_with_proxy_switching(
+            driver, 
+            proxy_manager, 
+            device_type, 
+            profile_path, 
+            max_proxy_attempts=3
+        )
         
-        print("🎯 CAPTCHA подтверждена, пытаемся решить...")
-        
-        # Пытаемся решить CAPTCHA
-        success = captcha_solve(driver, captcha_element)
-        
-        if success:
-            print("✅ CAPTCHA успешно решена!")
-            return True
+        if new_driver:
+            print("✅ Успешно переключились на новый прокси и профиль!")
+            return new_driver
         else:
-            print("❌ Не удалось решить CAPTCHA автоматически")
-            return False
+            print("❌ Не удалось переключиться на новый прокси")
+            return None
             
     except Exception as e:
-        print(f"❌ Ошибка при автоматическом решении CAPTCHA: {e}")
-        return False
+        print(f"❌ Ошибка переключения прокси: {e}")
+        return None
+
+def handle_captcha_automatically(driver, proxy_manager=None, device_type="desktop", profile_path=None):
+    """Автоматическое решение CAPTCHA с возможностью переключения прокси"""
+    print("🤖 Запускаем автоматическое решение CAPTCHA...")
+    
+    # Сначала пробуем решить капчу автоматически
+    if CAPTCHA_SOLVER_AVAILABLE:
+        try:
+            # Используем продвинутую детекцию CAPTCHA
+            captcha_found, captcha_element = captcha_detect(driver)
+            
+            if not captcha_found:
+                print("✅ CAPTCHA не обнаружена продвинутым детектором")
+                return driver, True
+            
+            print("🎯 CAPTCHA подтверждена, пытаемся решить...")
+            
+            # Пытаемся решить CAPTCHA
+            success = captcha_solve(driver, captcha_element)
+            
+            if success:
+                print("✅ CAPTCHA успешно решена!")
+                return driver, True
+            else:
+                print("❌ Не удалось решить CAPTCHA автоматически")
+                
+        except Exception as e:
+            print(f"❌ Ошибка при автоматическом решении CAPTCHA: {e}")
+    else:
+        print("❌ Модуль решения CAPTCHA недоступен")
+    
+    # Если автоматическое решение не сработало, переключаем прокси
+    if proxy_manager:
+        print("🔄 Пробуем переключить прокси...")
+        
+        # Получаем путь к профилю из драйвера если не передан
+        if not profile_path:
+            try:
+                from driver_manager import get_driver_profile_path
+                profile_path = get_driver_profile_path(driver)
+                if profile_path:
+                    print(f"📁 Получен путь к профилю драйвера: {os.path.basename(profile_path)}")
+            except Exception as e:
+                print(f"⚠️ Не удалось получить путь к профилю: {e}")
+        
+        new_driver = handle_captcha_with_proxy_restart(
+            driver, proxy_manager, device_type, profile_path
+        )
+        
+        if new_driver:
+            return new_driver, True
+        else:
+            print("❌ Переключение прокси не помогло")
+            return driver, False
+    else:
+        print("⚠️ Прокси менеджер не предоставлен - переключение невозможно")
+        return driver, False
 
 def click_sort_by_date(driver):
     """Переключение сортировки отзывов на 'Сначала новые' (по дате)"""

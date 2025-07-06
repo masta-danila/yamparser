@@ -3,7 +3,7 @@ from driver_manager import setup_driver, get_driver_creation_lock
 from page_handler import (
     extract_card_id_from_url, get_page_info, check_for_captcha, 
     handle_captcha_automatically, click_sort_by_date, handle_popup_if_available,
-    scroll_page, POPUP_HANDLER_AVAILABLE
+    scroll_page, prepare_reviews_url, POPUP_HANDLER_AVAILABLE
 )
 from review_extractor import (
     find_reviews_on_page, extract_review_data, parse_date_string,
@@ -11,8 +11,9 @@ from review_extractor import (
 )
 from data_processor import (
     process_and_save_results, filter_reviews_by_date, limit_reviews_count,
-    clean_review_data, load_checkpoint, save_checkpoint
+    clean_review_data, load_checkpoint, save_checkpoint, save_reviews_to_database
 )
+from thread_logger import thread_print
 
 # Стандартные импорты
 from selenium.webdriver.common.by import By
@@ -21,9 +22,10 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 import sys
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import threading
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # Импорт модуля работы с базой данных
 try:
@@ -38,10 +40,10 @@ except ImportError:
 try:
     from proxy_manager import ProxyManagerSeleniumWire
     PROXY_AVAILABLE = True
-    print("✅ Модуль рабочих прокси (seleniumwire) подключен")
+    thread_print("✅ Модуль рабочих прокси (seleniumwire) подключен")
 except ImportError:
     PROXY_AVAILABLE = False
-    print("⚠️ Модуль proxy_manager.py не найден - прокси будут недоступны")
+    thread_print("⚠️ Модуль proxy_manager.py не найден - прокси будут недоступны")
 
 # Глобальная блокировка для создания драйверов (получаем из driver_manager)
 _driver_creation_lock = get_driver_creation_lock()
@@ -53,9 +55,16 @@ _driver_creation_lock = get_driver_creation_lock()
 
 # Функция click_sort_by_date теперь импортируется из page_handler
 
+def get_thread_prefix() -> str:
+    """Возвращает префикс с именем текущего потока для логов"""
+    thread_name = threading.current_thread().name
+    if thread_name == "MainThread":
+        return "[MAIN]"
+    return f"[{thread_name.upper()}]"
+
 def extract_reviews(driver, max_reviews=10):
     """Извлечение текстов отзывов со страницы"""
-    print(f"\n📝 Извлекаем последние {max_reviews} отзывов...")
+    thread_print(f"\n📝 Извлекаем последние {max_reviews} отзывов...")
     
     # Селекторы для поиска отзывов
     review_selectors = [
@@ -72,7 +81,7 @@ def extract_reviews(driver, max_reviews=10):
     
     for selector in review_selectors:
         try:
-            print(f"🔍 Ищем отзывы по селектору: {selector}")
+            thread_print(f"🔍 Ищем отзывы по селектору: {selector}")
             elements = driver.find_elements(By.CSS_SELECTOR, selector)
             
             for element in elements:
@@ -82,7 +91,7 @@ def extract_reviews(driver, max_reviews=10):
                     # Фильтруем слишком короткие тексты (вероятно не отзывы)
                     if len(review_text) > 20 and review_text not in reviews:
                         reviews.append(review_text)
-                        print(f"✅ Найден отзыв #{len(reviews)}: {review_text[:50]}...")
+                        thread_print(f"✅ Найден отзыв #{len(reviews)}: {review_text[:50]}...")
                         
                         # Останавливаемся, если достигли нужного количества
                         if len(reviews) >= max_reviews:
@@ -93,10 +102,10 @@ def extract_reviews(driver, max_reviews=10):
                 break
                 
         except Exception as e:
-            print(f"❌ Ошибка с селектором {selector}: {e}")
+            thread_print(f"❌ Ошибка с селектором {selector}: {e}")
             continue
     
-    print(f"📊 Всего найдено отзывов: {len(reviews)}")
+    thread_print(f"📊 Всего найдено отзывов: {len(reviews)}")
     return reviews[:max_reviews]
 
 def expand_review_text(driver, container):
@@ -234,23 +243,30 @@ def expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_in
                 # 🎯 ПРОВЕРКА ДАТЫ ОТЗЫВА И CHECKPOINT ПЕРЕД ОБРАБОТКОЙ
                 review_date_str = get_review_date_quickly(review)
                 
-                # Проверяем checkpoint
-                if checkpoint_date and review_date_str:
+                # Парсим дату один раз для всех проверок
+                parsed_review_date = None
+                review_date_obj = None
+                
+                if review_date_str:
                     try:
-                        # Парсим дату отзыва в стандартный формат (если ещё не распарсена)
                         import re
                         if re.match(r'^\d{4}-\d{2}-\d{2}$', review_date_str):
                             # Дата уже в формате YYYY-MM-DD
                             parsed_review_date = review_date_str
+                            review_date_obj = datetime.strptime(review_date_str, '%Y-%m-%d')
                         else:
-                            # Парсим дату
+                            # Парсим дату через нашу функцию
                             parsed_review_date = parse_review_date(review_date_str)
-                        
+                            if parsed_review_date:
+                                review_date_obj = datetime.strptime(parsed_review_date, '%Y-%m-%d')
+                    except (ValueError, TypeError):
+                        pass  # Если не удалось распарсить дату, продолжаем с пустыми значениями
+                
+                # Проверяем checkpoint
+                if checkpoint_date and parsed_review_date:
+                    try:
                         # Преобразуем checkpoint_date в строку если это объект date
                         checkpoint_date_str = str(checkpoint_date) if checkpoint_date else None
-                        
-                        # ОТЛАДКА: выводим информацию о проверке
-                        print(f"🔍 Отзыв #{i+1}: дата '{parsed_review_date}' vs checkpoint '{checkpoint_date_str}'")
                         
                         # Сравниваем с checkpoint датой
                         if parsed_review_date == checkpoint_date_str:
@@ -270,20 +286,14 @@ def expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_in
                         print(f"❌ Ошибка проверки checkpoint для отзыва #{i+1}: {e}")
                         pass  # Если не удалось распарсить дату, продолжаем
                 
-                # Проверяем дату отсечения (только если нет checkpoint или он не найден)
-                if cutoff_date and review_date_str:
-                    try:
-                        review_date = datetime.strptime(review_date_str, '%Y-%m-%d')
-                        
-                        # Если отзыв старше целевой даты - останавливаем обработку
-                        if review_date < cutoff_date:
-                            print(f"🎯 Достигнута дата отсечения! Отзыв от {review_date_str} старше чем {cutoff_date.strftime('%Y-%m-%d')}")
-                            print(f"🛑 Остановка обработки отзывов на позиции #{i+1}")
-                            stats['date_limit_reached'] = True
-                            break
-                            
-                    except ValueError:
-                        pass  # Если не удалось распарсить дату, продолжаем
+                # Проверяем дату отсечения (только если нет checkpoint)
+                if cutoff_date and review_date_obj and not checkpoint_info:
+                    # Если отзыв старше целевой даты - останавливаем обработку
+                    if review_date_obj < cutoff_date:
+                        print(f"🎯 Достигнута дата отсечения! Отзыв от {parsed_review_date} старше чем {cutoff_date.strftime('%Y-%m-%d')}")
+                        print(f"🛑 Остановка обработки отзывов на позиции #{i+1}")
+                        stats['date_limit_reached'] = True
+                        break
                 
                 # 🌊 ПЛАВНАЯ прокрутка к отзыву с имитацией человеческого поведения
                 
@@ -1153,6 +1163,69 @@ def parse_review_date(date_str: str) -> str:
         # Нормализуем входную строку
         date_str_clean = date_str.strip()
         
+        # ========== ФОРМАТ YYYY-MM-DD ==========
+        # Проверяем, не является ли дата уже в правильном формате
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str_clean):
+            return date_str_clean
+        
+        date_str_clean = date_str_clean.lower()
+        
+        # ========== ОТНОСИТЕЛЬНЫЕ ДАТЫ ==========
+        from datetime import timedelta
+        current_date = datetime.now()
+        
+        # "вчера", "yesterday"
+        if any(word in date_str_clean for word in ['вчера', 'yesterday']):
+            yesterday = current_date - timedelta(days=1)
+            return yesterday.strftime('%Y-%m-%d')
+        
+        # "сегодня", "today"
+        if any(word in date_str_clean for word in ['сегодня', 'today']):
+            return current_date.strftime('%Y-%m-%d')
+        
+        # "X дней назад", "X days ago"
+        days_ago_patterns = [
+            r'(\d+)\s*(?:дней?|дня)\s*назад',  # "5 дней назад", "1 день назад"
+            r'(\d+)\s*days?\s*ago',            # "5 days ago", "1 day ago"
+        ]
+        
+        for pattern in days_ago_patterns:
+            match = re.search(pattern, date_str_clean)
+            if match:
+                days = int(match.group(1))
+                past_date = current_date - timedelta(days=days)
+                return past_date.strftime('%Y-%m-%d')
+        
+        # "X недель назад", "X weeks ago"
+        weeks_ago_patterns = [
+            r'(\d+)\s*(?:недель?|недели|неделю)\s*назад',  # "2 недели назад", "1 неделю назад"
+            r'(\d+)\s*weeks?\s*ago',                       # "2 weeks ago"
+        ]
+        
+        for pattern in weeks_ago_patterns:
+            match = re.search(pattern, date_str_clean)
+            if match:
+                weeks = int(match.group(1))
+                past_date = current_date - timedelta(weeks=weeks)
+                return past_date.strftime('%Y-%m-%d')
+        
+        # "X месяцев назад", "X months ago"
+        months_ago_patterns = [
+            r'(\d+)\s*(?:месяцев?|месяца)\s*назад',  # "3 месяца назад"
+            r'(\d+)\s*months?\s*ago',                # "3 months ago"
+        ]
+        
+        for pattern in months_ago_patterns:
+            match = re.search(pattern, date_str_clean)
+            if match:
+                months = int(match.group(1))
+                # Приблизительно: 1 месяц = 30 дней
+                past_date = current_date - timedelta(days=months * 30)
+                return past_date.strftime('%Y-%m-%d')
+        
+        # Возвращаем исходную строку для дальнейшей обработки
+        date_str_clean = date_str.strip()
+        
         # ========== ФОРМАТ С ГОДОМ ==========
         # "November 5, 2024", "April 19, 2023", "May 17, 2022"
         pattern_with_year = r'([A-Za-zа-я]+)\s+(\d{1,2}),?\s+(\d{4})'
@@ -1482,22 +1555,25 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         print("⚠️ Прокси запрошены, но модуль недоступен")
     
     # Настройка и запуск браузера с поддержкой прокси
-    print(f"🚀 Настройка Selenium драйвера ({device_type})...")
+    thread_print(f"🚀 Настройка Selenium драйвера ({device_type})...")
     driver = setup_driver(device_type, proxy_manager, profile_path)
     
     # Сохраняем информацию о профиле для освобождения в finally
     # Больше не сохраняем информацию о профиле в драйвере
     
     if not driver:
-        print("❌ Не удалось запустить браузер")
+        thread_print("❌ Не удалось запустить браузер")
         return None
     
-    print("✅ Драйвер запущен!")
+    thread_print("✅ Драйвер запущен!")
     
     try:
+        # Подготавливаем URL (добавляем /reviews/ если нужно)
+        normalized_url = prepare_reviews_url(url)
+        
         # Загружаем страницу
         print("🔗 Загружаем страницу...")
-        driver.get(url)
+        driver.get(normalized_url)
         
         # БЕЗОПАСНОСТЬ: Случайная пауза для имитации человеческого поведения
         import random
@@ -1519,11 +1595,16 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             driver.save_screenshot("captcha_detected.png")
             print("📸 Скриншот CAPTCHA сохранен: captcha_detected.png")
             
-            # Пытаемся решить CAPTCHA автоматически
-            captcha_solved = handle_captcha_automatically(driver)
+            # Пытаемся решить CAPTCHA автоматически с возможностью переключения прокси
+            driver, captcha_solved = handle_captcha_automatically(
+                driver, 
+                proxy_manager=proxy_manager, 
+                device_type=device_type, 
+                profile_path=profile_path
+            )
             
             if not captcha_solved:
-                print("❌ Не удалось решить CAPTCHA автоматически")
+                print("❌ Не удалось решить CAPTCHA автоматически и переключением прокси")
                 print("🔧 Решите CAPTCHA вручную в браузере и нажмите Enter...")
                 input("Нажмите Enter после решения CAPTCHA...")
                 
@@ -1550,6 +1631,15 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             print(f"⏳ Пауза после сортировки: {human_pause:.1f} сек...")
             time.sleep(human_pause)
         
+        # 🔽 ПРОКРУТКА СТРАНИЦЫ для загрузки всех отзывов
+        print(f"\n🔽 Прокрутка страницы для загрузки отзывов...")
+        scroll_page(driver)
+        
+        # БЕЗОПАСНОСТЬ: Пауза после прокрутки
+        human_pause = random.uniform(1.0, 2.0)
+        print(f"⏳ Пауза после прокрутки: {human_pause:.1f} сек...")
+        time.sleep(human_pause)
+        
         # 🌊 ПЛАВНОЕ раскрытие отзывов с проверкой дат ПЕРЕД парсингом
         print(f"\n🌊 Плавное раскрытие отзывов...")
         
@@ -1557,8 +1647,8 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             # Инкрементальный парсинг - раскрываем до checkpoint
             expanded_count = expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_info=checkpoint_info)
         else:
-            # Первичный парсинг - раскрываем только до целевой даты
-            expanded_count = expand_all_reviews_with_date_check(driver, max_days_back)
+            # Первичный парсинг - раскрываем отзывы с ограничением по дате
+            expanded_count = expand_all_reviews_with_date_check(driver, max_days_back=max_days_back, checkpoint_info=None)
         
         print(f"✅ Раскрыто отзывов: {expanded_count}")
         
@@ -1578,20 +1668,22 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         # Выводим отзывы в консоль
         print_reviews(reviews_data)
         
-        # Делаем финальный скриншот
-        driver.save_screenshot("reviews_page_sorted_new_first.png")
-        print("📸 Скриншот сохранен: reviews_page_sorted_new_first.png")
+        # Финальный скриншот отключен для экономии места
+        # driver.save_screenshot("reviews_page_sorted_new_first.png")
+        # print("📸 Скриншот сохранен: reviews_page_sorted_new_first.png")
         
         # Финальная информация
         final_info = {
             "success": True,
             "url": driver.current_url,
             "title": driver.title,
+            "card_id": card_id,  # Добавляем ID карточки
             "captcha_detected": False,  # Если дошли до сюда, то CAPTCHA решена
             "sort_applied": sort_applied,
-            "screenshot": "reviews_page_sorted_new_first.png",
+            "screenshot": None,  # Скриншот отключен
             "parsing_strategy": parsing_strategy,
             "reviews_found": len(reviews_data),
+            "reviews": reviews_data,  # Добавляем сами отзывы
             "database_result": save_result
         }
         
@@ -1600,7 +1692,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         print(f"   📄 Заголовок: {final_info['title']}")
         print(f"   🤖 CAPTCHA: {'Нет' if not final_info['captcha_detected'] else 'Да'}")
         print(f"   📅 Сортировка 'New first': {'Применена' if final_info['sort_applied'] else 'Не применена'}")
-        print(f"   📸 Скриншот: {final_info['screenshot']}")
+        # print(f"   📸 Скриншот: {final_info['screenshot']}")  # Скриншот отключен
         
         print("\n✅ Задача выполнена. Браузер будет закрыт автоматически.")
         
@@ -1631,6 +1723,11 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
 
 def main():
     """Основная функция"""
+    
+    # Инициализация с очисткой старых профилей
+    from driver_manager import initialize_profiles_cleanup, cleanup_all_profiles
+    initialize_profiles_cleanup()
+    
     # URL по умолчанию - страница отзывов Тульского цирка
     default_url = "https://yandex.ru/maps/org/la_bottega_siciliana/61925386633/reviews/"
 
@@ -1666,7 +1763,7 @@ def main():
     print(f"   🌐 Использовать прокси: {'Да' if USE_PROXY else 'Нет'}")
     print("=" * 50)
     
-    print(f"\n📱 Используем: {DEVICE_TYPE} устройство (iPhone 13) с раскрытием отзывов")
+    print(f"\n📱 Используем: {DEVICE_TYPE} устройство (iPhone 13) с плавным открытием")
     
     # Запускаем получение страницы
     result = get_reviews_page(
@@ -1696,6 +1793,9 @@ def main():
             print("💡 Для решения CAPTCHA используйте selenium_captcha_solver.py")
     else:
         print(f"\n❌ Ошибка выполнения: {result.get('error', 'Неизвестная ошибка')}")
+    
+    # Финальная очистка всех профилей
+    cleanup_all_profiles()
 
 if __name__ == "__main__":
     main() 

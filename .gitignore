@@ -38,6 +38,7 @@ simple_smart_profile_*/
 smart_scroll_profile_*/
 test_scroll_profile/
 fast_profile_*/
+chrome_profiles/
 
 # Screenshots
 *.png

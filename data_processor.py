@@ -5,6 +5,7 @@
 import json
 import os
 from datetime import datetime
+from thread_logger import thread_print
 
 # Импорт функций работы с базой данных
 try:
@@ -31,10 +32,10 @@ def save_checkpoint(checkpoint_data, checkpoint_file):
     try:
         with open(checkpoint_file, 'w', encoding='utf-8') as f:
             json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
-        print(f"💾 Checkpoint сохранен: {checkpoint_file}")
+        thread_print(f"💾 Checkpoint сохранен: {checkpoint_file}")
         return True
     except Exception as e:
-        print(f"❌ Ошибка сохранения checkpoint: {e}")
+        thread_print(f"❌ Ошибка сохранения checkpoint: {e}")
         return False
 
 def load_checkpoint(checkpoint_file):

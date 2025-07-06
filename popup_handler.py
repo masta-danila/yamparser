@@ -7,6 +7,7 @@
 import time
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from thread_logger import thread_print
 
 def find_not_now_button(driver):
     """
@@ -57,7 +58,7 @@ def find_not_now_button(driver):
     found_buttons = []
     
     # 1. ПРИОРИТЕТНЫЙ ПОИСК ПО ID (самый надежный)
-    print("🔍 Приоритетный поиск по ID...")
+    thread_print("🔍 Приоритетный поиск по ID...")
     try:
         # Известные ID кнопок закрытия для разных типов попапов
         known_ids = [
@@ -90,7 +91,7 @@ def find_not_now_button(driver):
         pass
     
     # 2. ПОИСК ПО ТЕКСТУ КНОПКИ
-    print("🔍 Ищем кнопки по тексту...")
+    thread_print("🔍 Ищем кнопки по тексту...")
     for text in button_texts:
         try:
             # XPath поиск по точному тексту (включая div для Яндекс.Карт)
@@ -128,7 +129,7 @@ def find_not_now_button(driver):
             continue
     
     # 2.1. СПЕЦИАЛЬНЫЙ ПОИСК ДЛЯ ЯНДЕКС.КАРТ (после основного поиска по тексту)
-    print("🔍 Дополнительный поиск для Яндекс.Карт...")
+    thread_print("🔍 Дополнительный поиск для Яндекс.Карт...")
     try:
         # Поиск ссылок с динамическими классами Яндекса, содержащих "Не сейчас"
         yandex_patterns = [

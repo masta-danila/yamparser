@@ -11,6 +11,7 @@ import time
 import random
 import re
 from datetime import datetime, timedelta
+from thread_logger import thread_print
 
 def expand_review_text(driver, review_element):
     """Развернуть текст отзыва, если он обрезан"""
@@ -23,16 +24,16 @@ def expand_review_text(driver, review_element):
                 button_text = button.text.strip().lower()
                 # Проверяем различные варианты текста кнопки
                 if any(keyword in button_text for keyword in ['ещё', 'more', 'еще', 'показать']):
-                    print(f"🔍 Найдена кнопка расширения: '{button.text}'")
+                    thread_print(f"🔍 Найдена кнопка расширения: '{button.text}'")
                     try:
                         # Используем JavaScript клик для надежности
                         driver.execute_script("arguments[0].click();", button)
-                        print("✅ Текст отзыва развернут")
+                        thread_print("✅ Текст отзыва развернут")
                         # Небольшая пауза для загрузки полного текста
                         time.sleep(0.5)
                         return True
                     except Exception as e:
-                        print(f"❌ Ошибка клика по кнопке расширения: {e}")
+                        thread_print(f"❌ Ошибка клика по кнопке расширения: {e}")
                         continue
         
         return False  # Кнопка не найдена или не кликнута

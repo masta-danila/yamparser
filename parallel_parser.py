@@ -2,10 +2,13 @@ import sys
 import os
 import time
 import logging
+import threading
+import psutil
 from threading import Thread, Lock
 from typing import List, Dict, Any
 from reviews_parser import get_reviews_page
-from driver_manager import get_driver_creation_lock
+from driver_manager import get_driver_creation_lock, initialize_profiles_cleanup, cleanup_all_profiles
+from thread_logger import thread_print, get_thread_prefix
 
 # Настройка логирования
 logging.basicConfig(
@@ -31,6 +34,52 @@ logger.setLevel(logging.INFO)
 
 # Используем общую блокировку из driver_manager для синхронизации между потоками
 driver_creation_lock = get_driver_creation_lock()
+
+# Функция get_thread_prefix теперь импортируется из thread_logger
+
+def monitor_system_resources():
+    """Мониторинг системных ресурсов"""
+    try:
+        # Получаем информацию о системе
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        
+        # Информация о процессах Chrome
+        chrome_processes = []
+        for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+            try:
+                if 'chrome' in proc.info['name'].lower():
+                    chrome_processes.append({
+                        'pid': proc.info['pid'],
+                        'name': proc.info['name'],
+                        'memory_mb': proc.info['memory_info'].rss / 1024 / 1024
+                    })
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        
+        # Информация о потоках
+        active_threads = threading.active_count()
+        
+        thread_print(f"📊 СИСТЕМНЫЕ РЕСУРСЫ:")
+        thread_print(f"   💻 CPU: {cpu_percent}%")
+        thread_print(f"   🧠 RAM: {memory.percent}% ({memory.used / 1024 / 1024 / 1024:.1f}GB / {memory.total / 1024 / 1024 / 1024:.1f}GB)")
+        thread_print(f"   🧵 Активных потоков: {active_threads}")
+        thread_print(f"   🌐 Chrome процессов: {len(chrome_processes)}")
+        
+        if chrome_processes:
+            total_chrome_memory = sum(p['memory_mb'] for p in chrome_processes)
+            thread_print(f"   📈 Chrome память: {total_chrome_memory:.1f}MB")
+        
+        return {
+            'cpu_percent': cpu_percent,
+            'memory_percent': memory.percent,
+            'active_threads': active_threads,
+            'chrome_processes': len(chrome_processes),
+            'chrome_memory_mb': sum(p['memory_mb'] for p in chrome_processes) if chrome_processes else 0
+        }
+    except Exception as e:
+        thread_print(f"❌ Ошибка мониторинга ресурсов: {e}")
+        return None
 
 def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile", 
                wait_time: int = 3, max_days_back: int = 10, max_reviews_limit: int = 2000, 
@@ -62,6 +111,10 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
     actual_workers = min(num_workers, len(urls), max_workers)
     logger.info(f"Запуск парсинга {len(urls)} URL-ов в {actual_workers} потоков")
     
+    # Мониторинг ресурсов перед запуском
+    thread_print("📊 Мониторинг ресурсов ПЕРЕД запуском потоков:")
+    initial_resources = monitor_system_resources()
+    
     # Больше не используем менеджер профилей - создаем временные профили
     
     # Распределяем URL-ы между потоками
@@ -90,19 +143,19 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
         if delay > 0:
             time.sleep(delay)
         
-        logger.info(f"Поток {worker_id}: Начало обработки {len(url_batch)} URL-ов")
+        thread_print(f"Поток {worker_id}: Начало обработки {len(url_batch)} URL-ов")
         
         batch_results = []
         total_batch_time = 0
         
         for url_index, url in enumerate(url_batch, 1):
-            logger.info(f"Поток {worker_id}: URL {url_index}/{len(url_batch)} - {url}")
+            thread_print(f"Поток {worker_id}: URL {url_index}/{len(url_batch)} - {url}")
             start_time = time.time()
             
             try:
                 # Проверяем корректность URL
                 if not url or "yandex.ru/maps/org/" not in url:
-                    logger.error(f"Поток {worker_id}: Некорректный URL: {url}")
+                    thread_print(f"Поток {worker_id}: Некорректный URL: {url}")
                     raise Exception(f"Некорректный URL: {url}")
                 
                 # Запуск парсинга (profile_path не передаем - используется значение по умолчанию None)
@@ -125,7 +178,7 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
                     "success": True
                 })
                 
-                logger.info(f"Поток {worker_id}: URL {url_index} завершен за {execution_time:.1f}с")
+                thread_print(f"Поток {worker_id}: URL {url_index} завершен за {execution_time:.1f}с")
                 
             except Exception as e:
                 execution_time = time.time() - start_time
@@ -137,7 +190,7 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
                     "execution_time": execution_time,
                     "success": False
                 })
-                logger.error(f"Поток {worker_id}: URL {url_index} ошибка - {e}")
+                thread_print(f"Поток {worker_id}: URL {url_index} ошибка - {e}")
             
             finally:
                 # Пауза между URL-ами в одном потоке для освобождения ресурсов
@@ -154,7 +207,7 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
             "urls_failed": sum(1 for r in batch_results if not r.get("success", False))
         }
         
-        logger.info(f"Поток {worker_id}: Батч завершен за {total_batch_time:.1f}с")
+        thread_print(f"Поток {worker_id}: Батч завершен за {total_batch_time:.1f}с")
     
     # Запуск потоков с задержками
     start_time = time.time()
@@ -167,10 +220,19 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
         )
         threads.append(thread)
         thread.start()
+        thread_print(f"🚀 Запущен поток {i + 1}/{len(url_batches)}")
+    
+    # Мониторинг ресурсов после запуска всех потоков
+    thread_print("📊 Мониторинг ресурсов ПОСЛЕ запуска всех потоков:")
+    post_start_resources = monitor_system_resources()
     
     # Ожидание завершения всех потоков
     for thread in threads:
         thread.join()
+    
+    # Мониторинг ресурсов после завершения
+    thread_print("📊 Мониторинг ресурсов ПОСЛЕ завершения потоков:")
+    final_resources = monitor_system_resources()
     
     total_time = time.time() - start_time
     
@@ -199,7 +261,7 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
     }
     
     # Итоговый отчет
-    logger.info(f"ИТОГИ: {total_successful}/{total_urls_processed} URL-ов успешно за {total_time:.1f}с")
+    thread_print(f"ИТОГИ: {total_successful}/{total_urls_processed} URL-ов успешно за {total_time:.1f}с")
     
     return summary
 
@@ -219,7 +281,7 @@ if __name__ == "__main__":
     USE_PROXY = True                    # Использовать ли прокси
 
     # Настройки потоков
-    MAX_WORKERS = 5                     # Максимальное количество потоков
+    MAX_WORKERS = 20                    # Максимальное количество потоков
     DELAY_BETWEEN_WORKERS = 2           # Задержка между запуском потоков (секунды)
     DELAY_BETWEEN_URLS = 3              # Пауза между URL-ами в одном потоке (секунды)
 
@@ -228,8 +290,27 @@ if __name__ == "__main__":
         "https://yandex.ru/maps/org/la_bottega_siciliana/61925386633/reviews/",
         "https://yandex.ru/maps/org/novikov/1254142092/reviews/",
         "https://yandex.ru/maps/org/tulskiy_gosudarstvenny_tsirk/1100333178/reviews/", 
-        "https://yandex.ru/maps/org/okhotny_ryad/1064113182/reviews/"
+        "https://yandex.ru/maps/org/okhotny_ryad/1064113182/reviews/",
+        "https://yandex.ru/maps/org/mcdonalds/1076394158/reviews/",
+        "https://yandex.ru/maps/org/burger_king/1372282234/reviews/",
+        "https://yandex.ru/maps/org/kfc/1139581043/reviews/",
+        "https://yandex.ru/maps/org/subway/1054545840/reviews/",
+        "https://yandex.ru/maps/org/starbucks/1325748447/reviews/",
+        "https://yandex.ru/maps/org/costa_coffee/1209506887/reviews/",
+        "https://yandex.ru/maps/org/pizza_hut/1133749027/reviews/",
+        "https://yandex.ru/maps/org/dominos_pizza/1139581043/reviews/",
+        "https://yandex.ru/maps/org/papa_johns/1054545840/reviews/",
+        "https://yandex.ru/maps/org/sushi_wok/1325748447/reviews/",
+        "https://yandex.ru/maps/org/yakitoriya/1209506887/reviews/",
+        "https://yandex.ru/maps/org/teremok/1133749027/reviews/",
+        "https://yandex.ru/maps/org/mu_mu/1139581043/reviews/",
+        "https://yandex.ru/maps/org/shokoladnitsa/1054545840/reviews/",
+        "https://yandex.ru/maps/org/coffee_house/1325748447/reviews/",
+        "https://yandex.ru/maps/org/kruzhka/1209506887/reviews/"
     ]
+    
+    # Инициализация с очисткой старых профилей
+    initialize_profiles_cleanup()
     
     # Используем URL-ы по умолчанию из настроек
     test_urls = DEFAULT_URLS
@@ -238,8 +319,8 @@ if __name__ == "__main__":
     workers_count = min(MAX_WORKERS, len(test_urls))  # Используем MAX_WORKERS или количество URL-ов
     
     # Запуск парсинга
-    logger.info("Запуск параллельного парсера...")
-    logger.info(f"Настройки: {DEVICE_TYPE}, {MAX_DAYS_BACK} дней, макс. {MAX_REVIEWS_LIMIT} отзывов")
+    thread_print("Запуск параллельного парсера...")
+    thread_print(f"Настройки: {DEVICE_TYPE}, {MAX_DAYS_BACK} дней, макс. {MAX_REVIEWS_LIMIT} отзывов")
     results = parse_urls(
         test_urls, 
         workers_count,
@@ -255,32 +336,35 @@ if __name__ == "__main__":
     
     # Вывод дополнительной статистики
     if results.get("all_results"):
-        print("\n" + "=" * 60)
-        print("ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ")
-        print("=" * 60)
-        print(f"Всего URL-ов: {results['total_urls']}")
-        print(f"Обработано: {results['urls_processed']}")
-        print(f"Успешно: {results['urls_successful']}")
-        print(f"Ошибок: {results['urls_failed']}")
-        print(f"Потоков: {results['workers_used']}")
+        thread_print("\n" + "=" * 60)
+        thread_print("ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ")
+        thread_print("=" * 60)
+        thread_print(f"Всего URL-ов: {results['total_urls']}")
+        thread_print(f"Обработано: {results['urls_processed']}")
+        thread_print(f"Успешно: {results['urls_successful']}")
+        thread_print(f"Ошибок: {results['urls_failed']}")
+        thread_print(f"Потоков: {results['workers_used']}")
         
         # Показываем результаты по URL-ам
         for i, result in enumerate(results["all_results"], 1):
-            print(f"\n📋 URL #{i}:")
-            print(f"  🔗 Адрес: {result['url']}")
-            print(f"  📊 Статус: {'✅ УСПЕХ' if result.get('success') else '❌ ОШИБКА'}")
-            print(f"  ⏱️ Время: {result['execution_time']:.1f} секунд")
+            thread_print(f"\n📋 URL #{i}:")
+            thread_print(f"  🔗 Адрес: {result['url']}")
+            thread_print(f"  📊 Статус: {'✅ УСПЕХ' if result.get('success') else '❌ ОШИБКА'}")
+            thread_print(f"  ⏱️ Время: {result['execution_time']:.1f} секунд")
             if not result.get("success"):
-                print(f"  ❌ Ошибка: {result.get('error', 'Неизвестная ошибка')}")
+                thread_print(f"  ❌ Ошибка: {result.get('error', 'Неизвестная ошибка')}")
         
         # Показываем результаты по потокам
-        print(f"\n" + "=" * 60)
-        print("СТАТИСТИКА ПО ПОТОКАМ")
-        print("=" * 60)
+        thread_print(f"\n" + "=" * 60)
+        thread_print("СТАТИСТИКА ПО ПОТОКАМ")
+        thread_print("=" * 60)
         
         for worker_id, worker_data in results["worker_results"].items():
-            print(f"\n🔧 {worker_id.upper()}:")
-            print(f"  📋 URL-ов в батче: {worker_data['urls_processed']}")
-            print(f"  ✅ Успешно: {worker_data['urls_successful']}")
-            print(f"  ❌ Ошибок: {worker_data['urls_failed']}")
-            print(f"  ⏱️ Общее время: {worker_data['total_batch_time']:.1f} секунд") 
+            thread_print(f"\n🔧 {worker_id.upper()}:")
+            thread_print(f"  📋 URL-ов в батче: {worker_data['urls_processed']}")
+            thread_print(f"  ✅ Успешно: {worker_data['urls_successful']}")
+            thread_print(f"  ❌ Ошибок: {worker_data['urls_failed']}")
+            thread_print(f"  ⏱️ Общее время: {worker_data['total_batch_time']:.1f} секунд")
+    
+    # Финальная очистка всех профилей
+    cleanup_all_profiles() 

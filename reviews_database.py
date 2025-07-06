@@ -89,8 +89,17 @@ class ReviewsDatabase:
             reviews = cursor.fetchall()
             cursor.close()
             
-            # Конвертируем в обычные словари
-            return [dict(review) for review in reviews]
+            # Конвертируем в обычные словари и добавляем поля для совместимости
+            result = []
+            for review in reviews:
+                review_dict = dict(review)
+                # Добавляем поля для совместимости с парсером
+                review_dict['text'] = review_dict.get('review_text', '')
+                review_dict['author'] = review_dict.get('author_name', '')
+                review_dict['date'] = review_dict.get('review_date', '')
+                result.append(review_dict)
+            
+            return result
             
         except Exception as e:
             print(f"❌ Ошибка получения отзывов по card_id {card_id}: {e}")
@@ -175,6 +184,49 @@ class ReviewsDatabase:
         except Exception as e:
             print(f"❌ Ошибка получения последнего отзыва: {e}")
             return None
+    
+    def get_latest_reviews(self, card_id: str, limit: int = 10) -> List[Dict]:
+        """
+        Получить последние N отзывов по карточке (отсортированные по дате создания в БД)
+        
+        Args:
+            card_id: ID карточки организации
+            limit: Количество отзывов
+            
+        Returns:
+            Список последних отзывов
+        """
+        try:
+            cursor = self.connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            
+            cursor.execute("""
+                SELECT 
+                    id, card_id, author_name, review_text, review_date, 
+                    rating, status, created_at, updated_at
+                FROM yandexmaps 
+                WHERE card_id = %s 
+                ORDER BY id DESC 
+                LIMIT %s
+            """, (card_id, limit))
+            
+            reviews = cursor.fetchall()
+            cursor.close()
+            
+            # Конвертируем в список словарей и добавляем поля для совместимости
+            result = []
+            for review in reviews:
+                review_dict = dict(review)
+                # Добавляем поля для совместимости с парсером
+                review_dict['text'] = review_dict.get('review_text', '')
+                review_dict['author'] = review_dict.get('author_name', '')
+                review_dict['date'] = review_dict.get('review_date', '')
+                result.append(review_dict)
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Ошибка получения последних отзывов: {e}")
+            return []
     
     def search_reviews(self, search_text: str, card_id: str = None, min_rating: float = None) -> List[Dict]:
         """
