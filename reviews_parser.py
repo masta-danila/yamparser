@@ -288,9 +288,9 @@ def expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_in
                 
                 # Проверяем дату отсечения (только если нет checkpoint)
                 if cutoff_date and review_date_obj and not checkpoint_info:
-                    # Если отзыв старше целевой даты - останавливаем обработку
-                    if review_date_obj < cutoff_date:
-                        print(f"🎯 Достигнута дата отсечения! Отзыв от {parsed_review_date} старше чем {cutoff_date.strftime('%Y-%m-%d')}")
+                    # Если отзыв старше ИЛИ РАВЕН целевой дате - останавливаем обработку
+                    if review_date_obj <= cutoff_date:
+                        print(f"🎯 Достигнута дата отсечения! Отзыв от {parsed_review_date} старше или равен {cutoff_date.strftime('%Y-%m-%d')}")
                         print(f"🛑 Остановка обработки отзывов на позиции #{i+1}")
                         stats['date_limit_reached'] = True
                         break
@@ -998,6 +998,9 @@ def get_review_date_quickly(container):
 def extract_single_review_data(driver, container):
     """Извлечение данных одного отзыва из контейнера"""
     try:
+        # СНАЧАЛА РАСКРЫВАЕМ ОТЗЫВ, если он свернут
+        expand_review_text(driver, container)
+        
         # Извлекаем различные части отзыва
         review_data = {}
         
@@ -1631,14 +1634,8 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             print(f"⏳ Пауза после сортировки: {human_pause:.1f} сек...")
             time.sleep(human_pause)
         
-        # 🔽 ПРОКРУТКА СТРАНИЦЫ для загрузки всех отзывов
-        print(f"\n🔽 Прокрутка страницы для загрузки отзывов...")
-        scroll_page(driver)
-        
-        # БЕЗОПАСНОСТЬ: Пауза после прокрутки
-        human_pause = random.uniform(1.0, 2.0)
-        print(f"⏳ Пауза после прокрутки: {human_pause:.1f} сек...")
-        time.sleep(human_pause)
+        # 🔽 ПЕРВИЧНОЕ ПРОКРУЧИВАНИЕ ОТКЛЮЧЕНО - используем только постепенное прокручивание к каждому отзыву
+        print(f"\n🔽 Первичное прокручивание отключено. Используем только постепенное прокручивание к каждому отзыву...")
         
         # 🌊 ПЛАВНОЕ раскрытие отзывов с проверкой дат ПЕРЕД парсингом
         print(f"\n🌊 Плавное раскрытие отзывов...")

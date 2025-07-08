@@ -1,0 +1,70 @@
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Git repository
+.git/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Browser profiles and cache
+*_profile*/
+chrome_profiles/
+
+# Screenshots and images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# Credentials and secrets
+credentials.json
+*.key
+*.pem
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.old
+*.swp
+*.swo
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+
+# Large data files
+*.csv
+*.xlsx
+*.json.bak
+
+# Documentation that doesn't need indexing
+CAPTCHA_PROXY_SWITCHING.md
+GOOGLE_API_SETUP.md 
