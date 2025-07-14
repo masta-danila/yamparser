@@ -110,32 +110,12 @@ def extract_reviews(driver, max_reviews=10):
 
 def expand_review_text(driver, container):
     """Раскрытие полного текста отзыва если он свернут"""
-    # Селекторы для кнопок раскрытия текста
+    # Простые и точные селекторы для кнопок раскрытия текста отзывов
     expand_button_selectors = [
-        # НАЙДЕННЫЙ РАБОЧИЙ СЕЛЕКТОР!
-        ".business-review-view__expand",
-        "span.business-review-view__expand",
-        
-        # Дополнительные селекторы
-        ".business-review-view__show-more",
-        ".spoiler-view__button",
-        ".show-more-button",
-        ".expand-button",
-        ".read-more",
-        "[class*='show-more']",
-        "[class*='expand']",
-        "[class*='spoiler'][class*='button']",
-        "button[class*='more']",
-        "span[class*='more']",
-        
-        # Текстовые селекторы
-        "//span[contains(text(), 'more')]",
-        "//span[contains(text(), 'Show more')]",
-        "//span[contains(text(), 'Read more')]", 
-        "//span[contains(text(), 'Показать полностью')]",
-        "//span[contains(text(), 'Читать далее')]",
-        "//button[contains(text(), 'Show more')]",
-        "//button[contains(text(), 'Показать полностью')]"
+        # ОСНОВНЫЕ селекторы (только для отзывов, НЕ для ответов организации)
+        ".spoiler-view__button",  # Кнопки внутри спойлеров отзывов
+        ".business-review-view__expand",  # Основные кнопки раскрытия
+        "span[role='button'][aria-label='Ещё']"  # Span элементы с точным aria-label
     ]
     
     # Получаем изначальный текст контейнера
@@ -144,30 +124,15 @@ def expand_review_text(driver, container):
     
     for selector in expand_button_selectors:
         try:
-            if selector.startswith("//"):
-                expand_buttons = container.find_elements(By.XPATH, selector)
-            else:
-                expand_buttons = container.find_elements(By.CSS_SELECTOR, selector)
+            expand_buttons = container.find_elements(By.CSS_SELECTOR, selector)
             
             for button in expand_buttons:
                 if button.is_displayed() and button.is_enabled():
                     try:
-                        # Проверяем, не относится ли кнопка к официальному ответу
-                        try:
-                            # Ищем ближайший родительский элемент кнопки
-                            button_parent = button.find_element(By.XPATH, "./ancestor::*[1]")
-                            parent_text = button_parent.text.lower()
-                            button_text = button.text.lower()
-                            
-                            # Пропускаем только если кнопка непосредственно относится к официальному ответу
-                            if any(phrase in parent_text for phrase in [
-                                'show business', 'business response', 'official response'
-                            ]) or any(phrase in button_text for phrase in [
-                                'show business', 'business response'
-                            ]):
-                                continue  # Тихо пропускаем кнопки официальных ответов
-                        except:
-                            pass  # Если не можем определить контекст, продолжаем
+                        # Фильтруем кнопки ответов организации по aria-label
+                        aria_label = button.get_attribute('aria-label') or ''
+                        if 'посмотреть ответ организации' in aria_label.lower():
+                            continue  # Пропускаем кнопки ответов организации
                         
                         # Прокручиваем к кнопке
                         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", button)
@@ -791,51 +756,48 @@ def extract_reviews_with_time_limit(driver, max_days_back: int, max_reviews_limi
         print(f"⚠️ Отзывы не найдены на странице")
         return reviews_data
     
+    print(f"📊 ДИАГНОСТИКА: Найдено отзывов на странице: {len(containers)}")
+    
     old_reviews_count = 0
     duplicate_count = 0
+    error_count = 0
     
-    # Обрабатываем ВСЕ контейнеры за один проход
-    for i, container in enumerate(containers):
-        if len(reviews_data) >= max_reviews_limit:
-            break
-            
-        if not container.is_displayed():
-            continue
-            
+    for i, container in enumerate(containers, 1):
         try:
-            # Создаем уникальный ID для отзыва
-            try:
-                author_elem = container.find_element(By.CSS_SELECTOR, ".business-review-view__author")
-                author = author_elem.text.strip() if author_elem else "unknown"
-                
-                date_elem = container.find_element(By.CSS_SELECTOR, ".business-review-view__date")
-                date = date_elem.text.strip() if date_elem else "unknown"
-                
-                text_preview = container.text[:50].replace('\n', ' ').strip()
-                review_id = f"{author}_{date}_{hash(text_preview)}"
-            except:
-                container_text = container.text[:100]
-                review_id = f"pos_{i}_{hash(container_text)}"
+            # Получаем ID отзыва
+            review_id = container.get_attribute('data-review-id') or f"review_{i}"
             
-            # Проверяем дубликаты
             if review_id in processed_review_ids:
                 duplicate_count += 1
                 continue
             
-            # Быстро проверяем дату
+            # Быстрая проверка даты перед полной обработкой
             quick_date = get_review_date_quickly(container)
+            print(f"🔍 Отзыв {i}/{len(containers)}: дата = '{quick_date}'")
+            
             if quick_date:
                 try:
-                    review_date = datetime.strptime(quick_date, '%Y-%m-%d')
-                    
-                    # Если отзыв старый - пропускаем
-                    if review_date < cutoff_date:
-                        old_reviews_count += 1
-                        processed_review_ids.add(review_id)
-                        continue
+                    # Парсим дату
+                    parsed_date = parse_review_date(quick_date)
+                    if parsed_date:
+                        review_date = datetime.strptime(parsed_date, '%Y-%m-%d')
                         
-                except ValueError:
+                        print(f"   📅 Проверка: {parsed_date} < {cutoff_date.strftime('%Y-%m-%d')} = {review_date < cutoff_date}")
+                        
+                        # Если отзыв старый - пропускаем
+                        if review_date < cutoff_date:
+                            old_reviews_count += 1
+                            processed_review_ids.add(review_id)
+                            print(f"   ⏰ Пропускаем старый отзыв от {parsed_date} (старше {cutoff_date.strftime('%Y-%m-%d')})")
+                            continue
+                        else:
+                            print(f"   ✅ Отзыв подходит по дате: {parsed_date}")
+                        
+                except (ValueError, TypeError) as e:
+                    print(f"   ❌ Ошибка парсинга даты '{quick_date}': {e}")
                     continue
+            else:
+                print(f"   ⚠️ Дата не найдена в отзыве {i}")
             
             # Полностью обрабатываем подходящий отзыв
             review_data = extract_single_review_data(driver, container)
@@ -843,23 +805,30 @@ def extract_reviews_with_time_limit(driver, max_days_back: int, max_reviews_limi
             if review_data and 'text' in review_data and review_data['text'].strip():
                 reviews_data.append(review_data)
                 processed_review_ids.add(review_id)
-                print(f"✅ Отзыв #{len(reviews_data)}: {review_data.get('author', 'Неизвестно')} ({review_data.get('date', 'Без даты')}) - {review_data['text'][:50]}...")
+                print(f"   ✅ Отзыв #{len(reviews_data)}: {review_data.get('author', 'Неизвестно')} ({review_data.get('date', 'Без даты')}) - {review_data['text'][:50]}...")
             else:
+                error_count += 1
                 processed_review_ids.add(review_id)
+                print(f"   ❌ Не удалось извлечь данные отзыва {i}")
                 
         except Exception as e:
+            error_count += 1
+            print(f"   ❌ Ошибка обработки отзыва {i}: {e}")
             continue
     
     # Выводим статистику
+    print(f"\n📊 СТАТИСТИКА ИЗВЛЕЧЕНИЯ:")
+    print(f"   📝 Всего отзывов на странице: {len(containers)}")
+    print(f"   ✅ Успешно обработано: {len(reviews_data)}")
     if duplicate_count > 0:
-        print(f"🔄 Пропущено дубликатов: {duplicate_count}")
+        print(f"   🔄 Пропущено дубликатов: {duplicate_count}")
     if old_reviews_count > 0:
-        print(f"⏰ Пропущено старых отзывов: {old_reviews_count}")
+        print(f"   ⏰ Пропущено старых отзывов: {old_reviews_count}")
+    if error_count > 0:
+        print(f"   ❌ Ошибок обработки: {error_count}")
     
     print(f"📊 Первичный парсинг завершен:")
     print(f"   ✅ Собрано отзывов: {len(reviews_data)}")
-    print(f"   🎯 Обработано контейнеров: {len(containers)}")
-    print(f"   📝 Уникальных элементов: {len(processed_review_ids)}")
     
     return reviews_data
 
@@ -1368,6 +1337,12 @@ def save_reviews_to_database(reviews_data: list, card_id: str) -> dict:
                     review_date = parse_review_date(review.get('date', ''))
                     rating = parse_rating(review.get('rating', ''))
                     
+                    # ДОПОЛНИТЕЛЬНАЯ проверка: пропускаем отзыв если не удалось распарсить дату
+                    if not review_date:
+                        print(f"⚠️ Отзыв #{i} пропущен - не удалось распарсить дату: '{review.get('date', '')}'")
+                        results["errors"] += 1
+                        continue
+                    
                     # Проверяем уникальность по алгоритму: card_id + date + author + rating
                     duplicate = db.check_duplicate_review(
                         card_id=card_id,
@@ -1634,20 +1609,17 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             print(f"⏳ Пауза после сортировки: {human_pause:.1f} сек...")
             time.sleep(human_pause)
         
-        # 🔽 ПЕРВИЧНОЕ ПРОКРУЧИВАНИЕ ОТКЛЮЧЕНО - используем только постепенное прокручивание к каждому отзыву
-        print(f"\n🔽 Первичное прокручивание отключено. Используем только постепенное прокручивание к каждому отзыву...")
-        
-        # 🌊 ПЛАВНОЕ раскрытие отзывов с проверкой дат ПЕРЕД парсингом
-        print(f"\n🌊 Плавное раскрытие отзывов...")
+        # 🚀 НОВАЯ БЫСТРАЯ ЛОГИКА: быстрая прокрутка → массовое раскрытие → считывание
+        print(f"\n🚀 БЫСТРАЯ ЛОГИКА: быстрая прокрутка → массовое раскрытие → считывание...")
         
         if parsing_strategy == "incremental":
-            # Инкрементальный парсинг - раскрываем до checkpoint
-            expanded_count = expand_all_reviews_with_date_check(driver, max_days_back=None, checkpoint_info=checkpoint_info)
+            # Инкрементальный парсинг - быстрая прокрутка до checkpoint + массовое раскрытие
+            expanded_count = fast_scroll_and_expand_with_checkpoint(driver, checkpoint_info)
         else:
-            # Первичный парсинг - раскрываем отзывы с ограничением по дате
-            expanded_count = expand_all_reviews_with_date_check(driver, max_days_back=max_days_back, checkpoint_info=None)
+            # Первичный парсинг - быстрая прокрутка до даты + массовое раскрытие
+            expanded_count = fast_scroll_and_expand_with_date_limit(driver, max_days_back)
         
-        print(f"✅ Раскрыто отзывов: {expanded_count}")
+        print(f"✅ Загружено отзывов на страницу: {expanded_count}")
         
         # Извлекаем отзывы в зависимости от стратегии
         print(f"\n📝 Извлекаем отзывы (стратегия: {parsing_strategy})...")
@@ -1658,6 +1630,15 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         else:
             # Первичный парсинг за определенный период
             reviews_data = extract_reviews_with_time_limit(driver, max_days_back, max_reviews_limit)
+        
+        # Дополнительная фильтрация отзывов по дате перед сохранением в БД
+        if reviews_data and parsing_strategy == "primary":
+            print(f"\n🗓️ Применяем дополнительную фильтрацию по дате перед сохранением...")
+            original_count = len(reviews_data)
+            reviews_data = filter_reviews_by_date(reviews_data, max_days_back)
+            if len(reviews_data) < original_count:
+                print(f"   ❌ Отфильтровано старых отзывов: {original_count - len(reviews_data)}")
+                print(f"   ✅ Остается для сохранения: {len(reviews_data)}")
         
         # Сохраняем отзывы в базу данных
         save_result = save_reviews_to_database(reviews_data, card_id)
@@ -1793,6 +1774,529 @@ def main():
     
     # Финальная очистка всех профилей
     cleanup_all_profiles()
+
+def fast_scroll_to_date_limit(driver, max_days_back):
+    """
+    🚀 БЫСТРАЯ прокрутка до достижения нужной даты БЕЗ раскрытия отзывов
+    """
+    from datetime import datetime, timedelta
+    
+    try:
+        print(f"🚀 БЫСТРАЯ прокрутка до {max_days_back} дней назад...")
+        
+        cutoff_date = datetime.now() - timedelta(days=max_days_back)
+        print(f"📅 Целевая дата: {cutoff_date.strftime('%Y-%m-%d')}")
+        
+        max_attempts = 15  # Увеличиваем для более глубокой прокрутки
+        scroll_step = 3000  # АГРЕССИВНЫЕ шаги для максимальной глубины
+        no_new_reviews_limit = 3  # Даем больше шансов для подгрузки
+        
+        print(f"🔧 ДИАГНОСТИКА: Максимум попыток: {max_attempts}, шаг прокрутки: {scroll_step}px")
+        
+        # Сначала проверяем, есть ли уже нужная дата на странице БЕЗ прокрутки
+        print(f"🔍 ПОИСК ОТЗЫВОВ: Ищем отзывы по селектору '.business-review-view'...")
+        initial_reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+        print(f"🔍 НАЧАЛЬНАЯ проверка: Найдено отзывов на странице: {len(initial_reviews)}")
+        
+        if initial_reviews:
+            last_review = initial_reviews[-1]
+            
+            # МАКСИМАЛЬНАЯ диагностика
+            print(f"🔍 НАЧАЛЬНАЯ проверка: Найден последний отзыв (индекс {len(initial_reviews)-1})")
+            try:
+                review_text_sample = last_review.text[:100] + "..." if len(last_review.text) > 100 else last_review.text
+                print(f"🔍 НАЧАЛЬНАЯ проверка: Образец текста отзыва: '{review_text_sample}'")
+            except:
+                print(f"🔍 НАЧАЛЬНАЯ проверка: Не удалось получить текст отзыва")
+            
+            initial_date_str = get_review_date_quickly(last_review)
+            print(f"🔍 НАЧАЛЬНАЯ проверка: Дата последнего отзыва: '{initial_date_str}'")
+            
+            if initial_date_str:
+                try:
+                    parsed_date = parse_review_date(initial_date_str)
+                    print(f"🔍 НАЧАЛЬНАЯ проверка: Парсенная дата: '{parsed_date}'")
+                    
+                    if parsed_date:
+                        review_date = datetime.strptime(parsed_date, '%Y-%m-%d')
+                        
+                        print(f"🔍 НАЧАЛЬНАЯ проверка: Сравнение {parsed_date} <= {cutoff_date.strftime('%Y-%m-%d')} = {review_date <= cutoff_date}")
+                        
+                        if review_date <= cutoff_date:
+                            print(f"✅ ЦЕЛЕВАЯ ДАТА УЖЕ НАЙДЕНА: {parsed_date} <= {cutoff_date.strftime('%Y-%m-%d')}")
+                            print(f"🚀 Прокрутка не нужна!")
+                            return True
+                        else:
+                            print(f"📅 Нужна прокрутка: {parsed_date} > {cutoff_date.strftime('%Y-%m-%d')}")
+                            print(f"🚀 ПЕРЕХОДИМ К ПРОКРУТКЕ...")
+                    else:
+                        print(f"⚠️ НАЧАЛЬНАЯ проверка: Парсинг даты не удался")
+                        print(f"🚀 ПЕРЕХОДИМ К ПРОКРУТКЕ (парсинг не удался)...")
+                except Exception as e:
+                    print(f"❌ НАЧАЛЬНАЯ проверка: Ошибка парсинга даты: {e}")
+                    print(f"🚀 ПЕРЕХОДИМ К ПРОКРУТКЕ (ошибка парсинга)...")
+            else:
+                print(f"⚠️ НАЧАЛЬНАЯ проверка: Дата не найдена в последнем отзыве")
+                print(f"🚀 ПЕРЕХОДИМ К ПРОКРУТКЕ (дата не найдена)...")
+        else:
+            print(f"❌ НАЧАЛЬНАЯ проверка: Отзывы не найдены на странице!")
+            print(f"🚀 ПЕРЕХОДИМ К ПРОКРУТКЕ (отзывы не найдены)...")
+        
+        previous_reviews_count = len(initial_reviews)
+        no_new_reviews_attempts = 0
+        
+        for attempt in range(max_attempts):
+            try:
+                # Ищем правильный контейнер для прокрутки
+                print(f"🔍 Поиск контейнера для прокрутки...")
+                
+                # Возможные селекторы контейнеров с отзывами
+                scroll_containers = [
+                    ".scroll__container",
+                    ".business-reviews-card-view__reviews", 
+                    ".business-tab-view",
+                    ".scroll-container",
+                    "[class*='scroll']",
+                    ".business-card-view",
+                    ".business-reviews-card-view",
+                    ".tabs-select-view__panel[role='tabpanel']",
+                    "main"
+                ]
+                
+                scroll_target = None
+                for selector in scroll_containers:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        element = elements[0]
+                        try:
+                            # Проверяем высоту и возможность прокрутки
+                            scroll_height = driver.execute_script("return arguments[0].scrollHeight;", element)
+                            client_height = driver.execute_script("return arguments[0].clientHeight;", element)
+                            current_scroll = driver.execute_script("return arguments[0].scrollTop;", element)
+                            
+                            print(f"🔍 Контейнер {selector}: scrollHeight={scroll_height}, clientHeight={client_height}, scrollTop={current_scroll}")
+                            
+                            # Контейнер может прокручиваться, если его содержимое больше видимой области
+                            if scroll_height > client_height:
+                                scroll_target = element
+                                print(f"✅ Найден прокручиваемый контейнер: {selector}")
+                                break
+                            else:
+                                print(f"⚠️ Контейнер {selector} не прокручивается (содержимое помещается)")
+                        except:
+                            print(f"⚠️ Не удалось проверить контейнер {selector}")
+                            continue
+                
+                if not scroll_target:
+                    print(f"⚠️ Прокручиваемый контейнер не найден, попробуем прокрутить body")
+                    try:
+                        body = driver.find_element(By.TAG_NAME, "body")
+                        scroll_target = body
+                    except:
+                        print(f"❌ Не удалось найти body")
+                
+                # Выполняем АГРЕССИВНУЮ прокрутку множественными методами
+                print(f"🚀 АГРЕССИВНАЯ прокрутка на {scroll_step}px...")
+                scroll_successful = False
+                
+                if scroll_target:
+                    try:
+                        # Получаем начальную позицию
+                        initial_scroll = driver.execute_script("return arguments[0].scrollTop;", scroll_target)
+                        print(f"📏 Начальная позиция прокрутки: {initial_scroll}px")
+                        
+                        # МЕТОД 1: Прокрутка конкретного элемента ПО ШАГАМ
+                        for step in range(0, scroll_step, 1000):
+                            driver.execute_script(f"arguments[0].scrollTop += 1000;", scroll_target)
+                            time.sleep(0.2)  # Короткие паузы между шагами
+                        
+                        # МЕТОД 2: Дополнительная прокрутка до МАКСИМУМА
+                        max_scroll = driver.execute_script("return arguments[0].scrollHeight - arguments[0].clientHeight;", scroll_target)
+                        if max_scroll > 0:
+                            driver.execute_script(f"arguments[0].scrollTop = Math.min(arguments[0].scrollTop + {scroll_step}, {max_scroll});", scroll_target)
+                            print(f"🔥 Прокрутили к максимуму: {max_scroll}px")
+                        
+                        time.sleep(1.0)  # Пауза для отрисовки
+                        
+                        # Проверяем финальную позицию
+                        final_scroll = driver.execute_script("return arguments[0].scrollTop;", scroll_target)
+                        print(f"📏 Финальная позиция прокрутки: {final_scroll}px")
+                        
+                        if final_scroll > initial_scroll:
+                            print(f"✅ Прокрутка контейнера успешна: +{final_scroll - initial_scroll}px")
+                            scroll_successful = True
+                        else:
+                            print(f"❌ Прокрутка контейнера не сработала")
+                            
+                    except Exception as e:
+                        print(f"❌ Ошибка прокрутки контейнера: {e}")
+                
+                # Если прокрутка контейнера не сработала, пробуем АГРЕССИВНЫЕ альтернативы
+                if not scroll_successful:
+                    print(f"🚀 АГРЕССИВНЫЕ альтернативные методы прокрутки...")
+                    
+                    try:
+                        # МЕТОД 3: МОЩНАЯ прокрутка window
+                        initial_window_scroll = driver.execute_script("return window.pageYOffset;")
+                        
+                        # Прокручиваем window несколькими способами
+                        driver.execute_script(f"window.scrollBy(0, {scroll_step});")
+                        time.sleep(0.2)
+                        driver.execute_script(f"window.scrollTo(0, window.pageYOffset + {scroll_step//2});")
+                        time.sleep(0.2)
+                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")  # До самого конца
+                        time.sleep(0.5)
+                        
+                        final_window_scroll = driver.execute_script("return window.pageYOffset;")
+                        
+                        if final_window_scroll > initial_window_scroll:
+                            print(f"✅ МОЩНАЯ прокрутка window успешна: +{final_window_scroll - initial_window_scroll}px")
+                            scroll_successful = True
+                        else:
+                            print(f"❌ МОЩНАЯ прокрутка window не сработала")
+                    except Exception as e:
+                        print(f"❌ Ошибка МОЩНОЙ прокрутки window: {e}")
+                
+                if not scroll_successful:
+                    # МЕТОД 4: ИНТЕНСИВНАЯ имитация клавиш
+                    print(f"⌨️ ИНТЕНСИВНАЯ имитация клавиш...")
+                    try:
+                        from selenium.webdriver.common.keys import Keys
+                        body = driver.find_element(By.TAG_NAME, "body")
+                        
+                        # Отправляем много клавиш для агрессивной прокрутки
+                        for i in range(10):  # 10 раз PAGE_DOWN
+                            body.send_keys(Keys.PAGE_DOWN)
+                            time.sleep(0.1)
+                        
+                        # Дополнительно End для гарантии
+                        body.send_keys(Keys.END)
+                        print(f"✅ Отправлено 10x PAGE_DOWN + END")
+                        scroll_successful = True
+                    except Exception as e:
+                        print(f"❌ Ошибка ИНТЕНСИВНОЙ отправки клавиш: {e}")
+                
+                # МЕТОД 5: ПРИНУДИТЕЛЬНАЯ прокрутка всех найденных контейнеров
+                if not scroll_successful:
+                    print(f"🔥 ПРИНУДИТЕЛЬНАЯ прокрутка ВСЕХ контейнеров...")
+                    try:
+                        all_containers = driver.find_elements(By.CSS_SELECTOR, "*[class*='scroll'], *[style*='overflow']")
+                        scrolled_any = False
+                        
+                        for i, container in enumerate(all_containers[:5]):  # Максимум 5 контейнеров
+                            try:
+                                initial = driver.execute_script("return arguments[0].scrollTop;", container)
+                                driver.execute_script(f"arguments[0].scrollTop += {scroll_step};", container)
+                                final = driver.execute_script("return arguments[0].scrollTop;", container)
+                                
+                                if final > initial:
+                                    print(f"✅ Контейнер {i+1}: +{final-initial}px")
+                                    scrolled_any = True
+                            except:
+                                continue
+                        
+                        if scrolled_any:
+                            scroll_successful = True
+                            print(f"✅ ПРИНУДИТЕЛЬНАЯ прокрутка сработала!")
+                        
+                    except Exception as e:
+                        print(f"❌ Ошибка ПРИНУДИТЕЛЬНОЙ прокрутки: {e}")
+                
+                time.sleep(4.0)  # МАКСИМАЛЬНАЯ пауза для ленивой загрузки
+                
+                # АГРЕССИВНЫЕ действия для принудительной подгрузки контента
+                try:
+                    print(f"🔥 АГРЕССИВНАЯ подгрузка контента...")
+                    
+                    # МЕТОД 1: Прокрутка контейнера до абсолютного конца
+                    if scroll_target:
+                        max_scroll = driver.execute_script("return arguments[0].scrollHeight - arguments[0].clientHeight;", scroll_target)
+                        driver.execute_script(f"arguments[0].scrollTop = {max_scroll};", scroll_target)
+                        print(f"🔥 Контейнер прокручен до АБСОЛЮТНОГО конца: {max_scroll}px")
+                    
+                    # МЕТОД 2: Window до самого конца
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    current_scroll = driver.execute_script("return window.pageYOffset;")
+                    print(f"🔥 Window прокручен до конца: {current_scroll}px")
+                    
+                    # МЕТОД 3: Дополнительные trigger события для подгрузки
+                    driver.execute_script("""
+                        // Создаем события прокрутки для всех возможных элементов
+                        const scrollEvent = new Event('scroll');
+                        const wheelEvent = new WheelEvent('wheel', {deltaY: 1000});
+                        
+                        window.dispatchEvent(scrollEvent);
+                        document.dispatchEvent(scrollEvent);
+                        
+                        // Ищем все прокручиваемые элементы и отправляем им события
+                        const scrollables = document.querySelectorAll('*');
+                        for(let el of scrollables) {
+                            if(el.scrollHeight > el.clientHeight) {
+                                el.dispatchEvent(scrollEvent);
+                                el.dispatchEvent(wheelEvent);
+                            }
+                        }
+                    """)
+                    
+                    time.sleep(3.0)  # Дополнительная пауза после событий
+                    print(f"🔥 События прокрутки отправлены, ждем подгрузки...")
+                    
+                except Exception as e:
+                    print(f"❌ Ошибка АГРЕССИВНОЙ подгрузки: {e}")
+                
+                # Проверяем количество отзывов на странице
+                reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+                current_reviews_count = len(reviews)
+                
+                print(f"🔍 Попытка {attempt + 1}/{max_attempts}: Найдено отзывов: {current_reviews_count} (было: {previous_reviews_count})")
+                
+                # Дополнительная диагностика положения прокрутки
+                try:
+                    scroll_position = driver.execute_script("return window.pageYOffset || document.documentElement.scrollTop;")
+                    print(f"📏 Текущая позиция прокрутки: {scroll_position}px")
+                except:
+                    print(f"⚠️ Не удалось получить позицию прокрутки")
+                
+                # Проверяем, подгрузились ли новые отзывы
+                if current_reviews_count <= previous_reviews_count:
+                    no_new_reviews_attempts += 1
+                    print(f"⚠️ Новые отзывы не подгрузились (попытка {no_new_reviews_attempts}/{no_new_reviews_limit})")
+                    
+                    if no_new_reviews_attempts >= no_new_reviews_limit:
+                        print(f"🛑 СТОП! Новые отзывы не загружаются уже {no_new_reviews_limit} попыток подряд")
+                        print(f"🤔 Возможно достигнут конец списка отзывов на Яндекс.Картах")
+                        print(f"📊 ФИНАЛЬНАЯ СТАТИСТИКА ПРОКРУТКИ:")
+                        print(f"   📈 Всего попыток прокрутки: {attempt + 1}")
+                        print(f"   📊 Начальное количество отзывов: {len(initial_reviews)}")
+                        print(f"   📊 Финальное количество отзывов: {current_reviews_count}")
+                        print(f"   📈 Прирост: +{current_reviews_count - len(initial_reviews)}")
+                        return True
+                else:
+                    # Новые отзывы подгрузились, сбрасываем счетчик
+                    no_new_reviews_attempts = 0
+                    new_reviews_loaded = current_reviews_count - previous_reviews_count
+                    print(f"✅ Подгрузилось {new_reviews_loaded} новых отзывов")
+                
+                previous_reviews_count = current_reviews_count
+                
+                # Проверяем дату последнего отзыва для остановки по времени
+                if reviews:
+                    # Проверяем только ПОСЛЕДНИЙ отзыв на странице
+                    last_review = reviews[-1]
+                    review_date_str = get_review_date_quickly(last_review)
+                    
+                    print(f"📅 Последний отзыв на странице: дата = '{review_date_str}'")
+                    
+                    if review_date_str:
+                        try:
+                            parsed_date = parse_review_date(review_date_str)
+                            if parsed_date:
+                                review_date = datetime.strptime(parsed_date, '%Y-%m-%d')
+                                
+                                print(f"🔍 Сравнение: {parsed_date} <= {cutoff_date.strftime('%Y-%m-%d')} = {review_date <= cutoff_date}")
+                                
+                                # НЕМЕДЛЕННАЯ остановка при первом старом отзыве!
+                                if review_date <= cutoff_date:
+                                    print(f"🛑 СТОП! Найден старый отзыв: {parsed_date} <= {cutoff_date.strftime('%Y-%m-%d')}")
+                                    print(f"✅ Достигнута целевая дата за {attempt + 1} прокруток")
+                                    return True
+                                else:
+                                    print(f"📅 Продолжаем: {parsed_date} > {cutoff_date.strftime('%Y-%m-%d')}")
+                            else:
+                                print(f"❌ Не удалось распарсить дату: '{review_date_str}'")
+                        except Exception as parse_error:
+                            print(f"❌ Ошибка парсинга даты '{review_date_str}': {parse_error}")
+                    else:
+                        print(f"⚠️ Дата не найдена в последнем отзыве")
+                else:
+                    print(f"⚠️ Отзывы не найдены на странице")
+                
+            except Exception as e:
+                print(f"❌ Ошибка прокрутки на попытке {attempt + 1}: {e}")
+                continue
+        
+        print(f"⚠️ Достигнут максимум попыток прокрутки ({max_attempts})")
+        print(f"🤔 Возможно на странице нет отзывов старше {cutoff_date.strftime('%Y-%m-%d')}")
+        return True  # Продолжаем работу даже если не нашли точную дату
+        
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА в fast_scroll_to_date_limit: {e}")
+        import traceback
+        traceback.print_exc()
+        return True
+
+def fast_scroll_to_checkpoint(driver, checkpoint_info):
+    """
+    🚀 БЫСТРАЯ прокрутка до checkpoint БЕЗ раскрытия отзывов
+    """
+    print(f"🚀 БЫСТРАЯ прокрутка до checkpoint...")
+    
+    checkpoint_author = checkpoint_info.get('last_author')
+    checkpoint_date = checkpoint_info.get('last_date')
+    
+    if not checkpoint_author:
+        print("⚠️ Checkpoint автор не указан")
+        return True
+    
+    print(f"🎯 Ищем: {checkpoint_author} ({checkpoint_date})")
+    
+    max_attempts = 10  # Максимально быстро  
+    scroll_step = 1500  # Очень большие шаги
+    
+    for attempt in range(max_attempts):
+        try:
+            # Быстрая прокрутка
+            driver.execute_script(f"window.scrollBy(0, {scroll_step});")
+            time.sleep(0.3)  # Минимальная пауза
+            
+            # АГРЕССИВНАЯ проверка checkpoint каждую попытку!
+            reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+            if reviews:
+                # Проверяем последние 10 отзывов на странице
+                last_reviews = reviews[-10:] if len(reviews) >= 10 else reviews
+                
+                for review in last_reviews:
+                    try:
+                        author_elem = review.find_element(By.CSS_SELECTOR, ".business-review-view__author")
+                        author = author_elem.text.strip() if author_elem else ""
+                        
+                        # Проверяем точное совпадение автора (главный критерий)
+                        if author == checkpoint_author:
+                            print(f"🎯 Найден автор checkpoint: {author}")
+                            print(f"✅ Checkpoint найден за {attempt + 1} прокруток")
+                            return True
+                    except:
+                        continue
+            
+        except Exception as e:
+            print(f"❌ Ошибка прокрутки на попытке {attempt + 1}: {e}")
+            continue
+    
+    print(f"⚠️ Checkpoint не найден за {max_attempts} попыток")
+    return False  # Checkpoint не найден
+
+def mass_expand_all_reviews(driver):
+    """
+    🌊 МАССОВОЕ раскрытие всех кнопок 'Ещё' на странице БЕЗ прокрутки к ним
+    """
+    print("🚀 МАССОВОЕ раскрытие кнопок 'Ещё'...")
+    
+    # Подсчитываем отзывы ДО раскрытия
+    reviews_before = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+    print(f"📊 ДИАГНОСТИКА: Отзывов на странице ДО раскрытия: {len(reviews_before)}")
+    
+    # Селекторы для кнопок раскрытия
+    expand_selectors = [
+        ".spoiler-view__button",           # Кнопки внутри спойлеров отзывов
+        ".business-review-view__expand",   # Основные кнопки "Ещё"
+        "span[role='button'][aria-label='Ещё']"  # Span элементы с точным aria-label
+    ]
+    
+    total_expanded = 0
+    
+    for selector in expand_selectors:
+        try:
+            expand_buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+            print(f"🔍 Найдено кнопок '{selector}': {len(expand_buttons)}")
+            
+            for i, button in enumerate(expand_buttons):
+                try:
+                    if button.is_displayed() and button.is_enabled():
+                        # НЕ прокручиваем к кнопке - просто кликаем
+                        driver.execute_script("arguments[0].click();", button)
+                        total_expanded += 1
+                        
+                        # Микропауза между кликами
+                        time.sleep(0.1)
+                        
+                except Exception as e:
+                    continue
+            
+        except Exception as e:
+            print(f"❌ Ошибка с селектором {selector}: {e}")
+            continue
+    
+    # Пауза для обработки всех раскрытий
+    time.sleep(2.0)
+    
+    # Подсчитываем отзывы ПОСЛЕ раскрытия
+    reviews_after = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+    print(f"📊 ДИАГНОСТИКА: Отзывов на странице ПОСЛЕ раскрытия: {len(reviews_after)}")
+    
+    print(f"✅ МАССОВОЕ раскрытие завершено:")
+    print(f"   🔘 Кликнуто кнопок: {total_expanded}")
+    print(f"   📊 Отзывов до: {len(reviews_before)}")
+    print(f"   📊 Отзывов после: {len(reviews_after)}")
+    print(f"   📈 Изменение: +{len(reviews_after) - len(reviews_before)}")
+    
+    return total_expanded
+
+def fast_scroll_and_expand_with_date_limit(driver, max_days_back):
+    """
+    🚀 БЫСТРАЯ логика: сначала быстрая прокрутка, потом массовое раскрытие
+    """
+    print(f"🚀 БЫСТРАЯ ЛОГИКА: прокрутка → массовое раскрытие")
+    
+    # ОБЯЗАТЕЛЬНО показываем начальное состояние
+    initial_reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+    print(f"📊 НАЧАЛЬНОЕ СОСТОЯНИЕ: отзывов на странице: {len(initial_reviews)}")
+    
+    # Этап 1: Быстрая прокрутка до нужной даты
+    print(f"🚀 ЭТАП 1: Быстрая прокрутка до {max_days_back} дней назад...")
+    scroll_success = fast_scroll_to_date_limit(driver, max_days_back)
+    print(f"📊 РЕЗУЛЬТАТ ПРОКРУТКИ: успех = {scroll_success}")
+    
+    # Проверяем результат прокрутки
+    after_scroll_reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+    print(f"📊 ПОСЛЕ ПРОКРУТКИ: отзывов на странице: {len(after_scroll_reviews)}")
+    
+    if not scroll_success:
+        print("❌ Быстрая прокрутка не удалась, но продолжаем...")
+    
+    # Этап 2: Массовое раскрытие всех отзывов
+    print(f"🚀 ЭТАП 2: Массовое раскрытие...")
+    expanded_count = mass_expand_all_reviews(driver)
+    
+    # Подсчитываем финальный результат
+    final_reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+    final_count = len(final_reviews)
+    
+    print(f"🎯 БЫСТРАЯ ЛОГИКА завершена:")
+    print(f"   📊 Начальное состояние: {len(initial_reviews)} отзывов")
+    print(f"   📊 После прокрутки: {len(after_scroll_reviews)} отзывов")
+    print(f"   📊 Финальное состояние: {final_count} отзывов")
+    print(f"   📖 Раскрыто кнопок: {expanded_count}")
+    print(f"   📈 Прирост от прокрутки: +{len(after_scroll_reviews) - len(initial_reviews)}")
+    print(f"   📈 Прирост от раскрытия: +{final_count - len(after_scroll_reviews)}")
+    
+    return final_count
+
+def fast_scroll_and_expand_with_checkpoint(driver, checkpoint_info):
+    """
+    🚀 БЫСТРАЯ логика для checkpoint: сначала быстрая прокрутка, потом массовое раскрытие
+    """
+    print(f"🚀 БЫСТРАЯ ЛОГИКА для checkpoint: прокрутка → массовое раскрытие")
+    
+    # Этап 1: Быстрая прокрутка до checkpoint
+    scroll_success = fast_scroll_to_checkpoint(driver, checkpoint_info)
+    if not scroll_success:
+        print("❌ Checkpoint не найден, продолжаем с полным раскрытием")
+    
+    # Этап 2: Массовое раскрытие всех отзывов
+    expanded_count = mass_expand_all_reviews(driver)
+    
+    # Подсчитываем финальный результат
+    final_reviews = driver.find_elements(By.CSS_SELECTOR, ".business-review-view")
+    final_count = len(final_reviews)
+    
+    print(f"🎯 БЫСТРАЯ ЛОГИКА завершена:")
+    print(f"   📊 Всего отзывов на странице: {final_count}")
+    print(f"   📖 Раскрыто отзывов: {expanded_count}")
+    print(f"   🎯 Checkpoint найден: {'Да' if scroll_success else 'Нет'}")
+    
+    return final_count
+
+# ============================================================================
 
 if __name__ == "__main__":
     main() 

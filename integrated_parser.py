@@ -1058,8 +1058,8 @@ def main():
 
 # Настройки Google Sheets (список таблиц для обработки)
 SPREADSHEETS = [
-    "https://docs.google.com/spreadsheets/d/142AAz6o3tSygBLhyRftCrhLUb8SyK1RO0qa-l7uPC3M/edit?gid=1343994181#gid=1343994181" #бустра
-    # "https://docs.google.com/spreadsheets/d/1oVylAVck8SGaCpVD0T8_FTXEuaNMIUv1BVOXCttSQuo/" #4 листа
+    # "https://docs.google.com/spreadsheets/d/142AAz6o3tSygBLhyRftCrhLUb8SyK1RO0qa-l7uPC3M/edit?gid=1343994181#gid=1343994181" #бустра
+    "https://docs.google.com/spreadsheets/d/1oVylAVck8SGaCpVD0T8_FTXEuaNMIUv1BVOXCttSQuo/" #4 листа
     # "https://docs.google.com/spreadsheets/d/10v9VFoD6g-RRLLs_nG4PksfV_ZVLL5klxeTOD3WCrok/",
     # "https://docs.google.com/spreadsheets/d/1prLF8cF6wpdGkOdgDyZLZ8MHbG0NbdfN_rVQ-ilYX3Y/"
 ]
@@ -1072,7 +1072,7 @@ SIMILARITY_THRESHOLD = 0.85             # Порог совпадения тек
 # Настройки парсинга
 DEVICE_TYPE = "mobile"                  # Тип устройства: "mobile" или "desktop"
 WAIT_TIME = 3                           # Время ожидания в секундах
-MAX_DAYS_BACK = 70                      # Максимальное количество дней назад для первичного парсинга
+MAX_DAYS_BACK = 30                      # Максимальное количество дней назад для первичного парсинга
 MAX_REVIEWS_LIMIT = 1000                 # Максимальное количество отзывов для парсинга
 USE_PROXY = True                        # Использовать ли прокси
 
