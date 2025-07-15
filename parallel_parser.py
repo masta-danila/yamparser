@@ -6,7 +6,7 @@ import threading
 import psutil
 from threading import Thread, Lock
 from typing import List, Dict, Any
-from reviews_parser import get_reviews_page
+from reviews_parser import get_reviews_page_with_retry
 from driver_manager import get_driver_creation_lock, initialize_profiles_cleanup, cleanup_all_profiles
 from thread_logger import thread_print, get_thread_prefix
 
@@ -158,14 +158,15 @@ def parse_urls(urls: List[str], num_workers: int = 4, device_type: str = "mobile
                     thread_print(f"Поток {worker_id}: Некорректный URL: {url}")
                     raise Exception(f"Некорректный URL: {url}")
                 
-                # Запуск парсинга (profile_path не передаем - используется значение по умолчанию None)
-                result = get_reviews_page(
+                # Запуск парсинга с повторными попытками при таймауте (profile_path не передаем - используется значение по умолчанию None)
+                result = get_reviews_page_with_retry(
                     url=url,
                     device_type=device_type,
                     wait_time=wait_time,
                     max_days_back=max_days_back,
                     max_reviews_limit=max_reviews_limit,
-                    use_proxy=use_proxy
+                    use_proxy=use_proxy,
+                    max_retries=3  # 3 повторные попытки при таймауте
                 )
                 
                 execution_time = time.time() - start_time

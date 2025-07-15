@@ -61,7 +61,7 @@ class SheetsUpdater:
             spreadsheet_url: URL таблицы Google Sheets
             sheet_name: Название листа
             row_number: Номер строки для обновления (1-based)
-            new_status: Новый статус ("Прошел модерацию")
+            new_status: Новый статус ("Размещен")
             publication_date: Дата публикации (опционально)
             
         Returns:
@@ -255,7 +255,7 @@ class SheetsUpdater:
             'spreadsheet_url': spreadsheet_url,
             'sheet_name': sheet_name,
             'row': sheet_review.get('row', 0),
-            'status': 'Прошел модерацию',
+                            'status': 'Размещен',
             'date': publication_date,
             'similarity': match['similarity_percent']
         }

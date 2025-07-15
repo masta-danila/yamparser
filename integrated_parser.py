@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
 # Импорт основных модулей
-from reviews_parser import get_reviews_page
+from reviews_parser import get_reviews_page_with_retry
 from google_sheets_reader import GoogleSheetsReader
 from text_matcher import TextMatcher
 from sheets_updater import SheetsUpdater
@@ -196,11 +196,11 @@ class IntegratedParser:
         """
         Получает данные листа и группирует их по URL
         
-        Обрабатываются только отзывы со статусом "Загрузил в ПО" и датой заказа не позднее max_days_back
+        Обрабатываются только отзывы со статусом "Модерация" и датой публикации не позднее max_days_back
         
         Args:
             sheet_name: Название листа
-            max_days_back: Максимальное количество дней назад для фильтрации по дате заказа
+            max_days_back: Максимальное количество дней назад для фильтрации по дате публикации
             
         Returns:
             Словарь с данными листа
@@ -216,10 +216,10 @@ class IntegratedParser:
             if df.empty:
                 return {'urls': {}, 'error': 'Лист пуст'}
             
-            # Проверяем наличие колонки "Дата заказа"
-            has_order_date_column = 'Дата заказа' in df.columns
-            if not has_order_date_column:
-                thread_print(f"⚠️ Колонка 'Дата заказа' не найдена в листе '{sheet_name}', фильтрация по дате отключена")
+            # Проверяем наличие колонки "Дата публикации"
+            has_publication_date_column = 'Дата публикации' in df.columns
+            if not has_publication_date_column:
+                thread_print(f"⚠️ Колонка 'Дата публикации' не найдена в листе '{sheet_name}', фильтрация по дате отключена")
             
             # Вычисляем пороговую дату
             from datetime import datetime, timedelta
@@ -242,7 +242,7 @@ class IntegratedParser:
                 url = row.get('Ссылка', '').strip()
                 review_text = row.get('Текст отзыва', '').strip()
                 status = row.get('Статус', '').strip()
-                order_date = row.get('Дата заказа', '') if has_order_date_column else None
+                publication_date = row.get('Дата публикации', '') if has_publication_date_column else None
                 
                 # Пропускаем строки без URL или с пустым текстом отзыва
                 if not url or not review_text:
@@ -254,57 +254,57 @@ class IntegratedParser:
                     filtered_by_url += 1
                     continue
                 
-                # Берем в работу только отзывы со статусом "Загрузил в ПО"
-                if status != "Загрузил в ПО":
+                # Берем в работу только отзывы со статусом "Модерация"
+                if status != "Модерация":
                     filtered_by_status += 1
                     continue
                 
-                # Фильтрация по дате заказа (если колонка есть)
-                if has_order_date_column:
-                    if not order_date or str(order_date).strip() == '' or str(order_date).strip().lower() in ['nan', 'none', 'null']:
+                # Фильтрация по дате публикации (если колонка есть)
+                if has_publication_date_column:
+                    if not publication_date or str(publication_date).strip() == '' or str(publication_date).strip().lower() in ['nan', 'none', 'null']:
                         filtered_by_empty_date += 1
                         continue
                     
-                    # Парсим дату заказа
+                    # Парсим дату публикации
                     try:
                         # Пробуем разные форматы дат
-                        order_date_str = str(order_date).strip()
-                        order_date_parsed = None
+                        publication_date_str = str(publication_date).strip()
+                        publication_date_parsed = None
                         
                         # Формат DD.MM.YYYY
-                        if '.' in order_date_str:
+                        if '.' in publication_date_str:
                             try:
-                                order_date_parsed = datetime.strptime(order_date_str, '%d.%m.%Y')
+                                publication_date_parsed = datetime.strptime(publication_date_str, '%d.%m.%Y')
                             except ValueError:
                                 pass
                         
                         # Формат YYYY-MM-DD
-                        if not order_date_parsed and '-' in order_date_str:
+                        if not publication_date_parsed and '-' in publication_date_str:
                             try:
-                                order_date_parsed = datetime.strptime(order_date_str, '%Y-%m-%d')
+                                publication_date_parsed = datetime.strptime(publication_date_str, '%Y-%m-%d')
                             except ValueError:
                                 pass
                         
                         # Формат DD/MM/YYYY
-                        if not order_date_parsed and '/' in order_date_str:
+                        if not publication_date_parsed and '/' in publication_date_str:
                             try:
-                                order_date_parsed = datetime.strptime(order_date_str, '%d/%m/%Y')
+                                publication_date_parsed = datetime.strptime(publication_date_str, '%d/%m/%Y')
                             except ValueError:
                                 pass
                         
                         # Если не удалось распарсить дату
-                        if not order_date_parsed:
-                            thread_print(f"⚠️ Не удалось распарсить дату заказа '{order_date_str}' в строке {index + 2}")
+                        if not publication_date_parsed:
+                            thread_print(f"⚠️ Не удалось распарсить дату публикации '{publication_date_str}' в строке {index + 2}")
                             filtered_by_empty_date += 1
                             continue
                         
-                        # Проверяем, что дата заказа не старше max_days_back
-                        if order_date_parsed < cutoff_date:
+                        # Проверяем, что дата публикации не старше max_days_back
+                        if publication_date_parsed < cutoff_date:
                             filtered_by_date += 1
                             continue
                             
                     except Exception as e:
-                        thread_print(f"❌ Ошибка обработки даты заказа '{order_date}' в строке {index + 2}: {e}")
+                        thread_print(f"❌ Ошибка обработки даты публикации '{publication_date}' в строке {index + 2}: {e}")
                         filtered_by_empty_date += 1
                         continue
                 
@@ -313,7 +313,7 @@ class IntegratedParser:
                     'status': status,
                     'row': index + 2,  # +2 потому что индекс 0-based, а строки 1-based + заголовок
                     'url': url,
-                    'order_date': order_date if has_order_date_column else None
+                    'publication_date': publication_date if has_publication_date_column else None
                 }
                 
                 urls_data[url].append(review_data)
@@ -324,10 +324,10 @@ class IntegratedParser:
             thread_print(f"   📝 Всего строк: {total_rows}")
             thread_print(f"   ❌ Отфильтровано пустых: {filtered_by_empty}")
             thread_print(f"   ❌ Отфильтровано некорректных URL: {filtered_by_url}")
-            thread_print(f"   ❌ Отфильтровано по статусу (не 'Загрузил в ПО'): {filtered_by_status}")
+            thread_print(f"   ❌ Отфильтровано по статусу (не 'Модерация'): {filtered_by_status}")
             
-            if has_order_date_column:
-                thread_print(f"   ❌ Отфильтровано без даты заказа: {filtered_by_empty_date}")
+            if has_publication_date_column:
+                thread_print(f"   ❌ Отфильтровано без даты публикации: {filtered_by_empty_date}")
                 thread_print(f"   ❌ Отфильтровано по дате (старше {max_days_back} дней): {filtered_by_date}")
                 thread_print(f"   📅 Пороговая дата: {cutoff_date.strftime('%d.%m.%Y')}")
             
@@ -365,14 +365,15 @@ class IntegratedParser:
             from page_handler import prepare_reviews_url
             normalized_url = prepare_reviews_url(url)
             
-            # Получаем отзывы с Яндекс.Карт
-            yandex_result = get_reviews_page(
+            # Получаем отзывы с Яндекс.Карт (с повторными попытками при таймауте)
+            yandex_result = get_reviews_page_with_retry(
                 url=normalized_url,
                 device_type=device_type,
                 wait_time=3,
                 max_days_back=max_days_back,
                 max_reviews_limit=max_reviews_limit,
-                use_proxy=True
+                use_proxy=True,
+                max_retries=3  # 3 повторные попытки при таймауте
             )
             
             if not yandex_result or not yandex_result.get('success', False):
@@ -477,12 +478,12 @@ class IntegratedParser:
                             spreadsheet_url=self.spreadsheet_url,
                             sheet_name=sheet_name,
                             row_number=sheet_review['row'],
-                            new_status='Прошел модерацию',
+                            new_status='Размещен',
                             publication_date=publication_date
                         )
                         
                         if success:
-                            thread_print(f"✅ Статус обновлен: строка {sheet_review['row']} -> 'Прошел модерацию'")
+                            thread_print(f"✅ Статус обновлен: строка {sheet_review['row']} -> 'Размещен'")
                             result['sheets_updated'] = result.get('sheets_updated', 0) + 1
                         else:
                             thread_print(f"❌ Не удалось обновить статус для строки {sheet_review['row']}")
@@ -493,7 +494,7 @@ class IntegratedParser:
                             'spreadsheet_url': self.spreadsheet_url,
                             'sheet_name': sheet_name,
                             'row': sheet_review['row'],
-                            'status': 'Прошел модерацию',
+                            'status': 'Размещен',
                             'date': publication_date,
                             'similarity_percent': match['similarity_percent']
                         }
@@ -1059,9 +1060,10 @@ def main():
 # Настройки Google Sheets (список таблиц для обработки)
 SPREADSHEETS = [
     # "https://docs.google.com/spreadsheets/d/142AAz6o3tSygBLhyRftCrhLUb8SyK1RO0qa-l7uPC3M/edit?gid=1343994181#gid=1343994181" #бустра
-    "https://docs.google.com/spreadsheets/d/1oVylAVck8SGaCpVD0T8_FTXEuaNMIUv1BVOXCttSQuo/" #4 листа
+    # "https://docs.google.com/spreadsheets/d/1oVylAVck8SGaCpVD0T8_FTXEuaNMIUv1BVOXCttSQuo/" #4 листа
     # "https://docs.google.com/spreadsheets/d/10v9VFoD6g-RRLLs_nG4PksfV_ZVLL5klxeTOD3WCrok/",
     # "https://docs.google.com/spreadsheets/d/1prLF8cF6wpdGkOdgDyZLZ8MHbG0NbdfN_rVQ-ilYX3Y/"
+    "https://docs.google.com/spreadsheets/d/15vhtopNKH0ulJt7RS_cI04d_OrB-SLUWc03yxMhENwo/"
 ]
 
 CREDENTIALS_FILE = "credentials.json"

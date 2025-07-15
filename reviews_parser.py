@@ -1484,6 +1484,82 @@ def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) 
         print(f"❌ Ошибка проверки checkpoint: {e}")
         return False
 
+def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None, max_retries=3):
+    """
+    Обертка для get_reviews_page с повторными попытками при таймауте
+    При ошибке создает новый браузер с новым профилем и прокси
+    
+    Args:
+        max_retries: максимальное количество повторных попыток (по умолчанию 3)
+        остальные параметры как в get_reviews_page
+    
+    Returns:
+        dict: результаты парсинга или информация об ошибке
+    """
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+    
+    last_error = None
+    
+    for attempt in range(max_retries + 1):  # +1 чтобы включить первоначальную попытку
+        try:
+            if attempt > 0:
+                print(f"🔄 ПОВТОРНАЯ ПОПЫТКА {attempt}/{max_retries} с новым браузером и прокси...")
+                # При повторной попытке всегда создаем новый профиль (передаем None)
+                result = get_reviews_page(url, device_type, wait_time, max_days_back, max_reviews_limit, use_proxy, profile_path=None)
+            else:
+                print(f"🚀 ПЕРВАЯ ПОПЫТКА загрузки страницы...")
+                result = get_reviews_page(url, device_type, wait_time, max_days_back, max_reviews_limit, use_proxy, profile_path)
+            
+            # Если успешно, возвращаем результат
+            if result and result.get('success', False):
+                if attempt > 0:
+                    print(f"✅ УСПЕХ на попытке {attempt + 1}!")
+                return result
+            else:
+                # Если результат неуспешный, но не исключение, попробуем еще раз
+                error_msg = result.get('error', 'Неизвестная ошибка') if result else 'Нет результата'
+                print(f"❌ Попытка {attempt + 1} неуспешна: {error_msg}")
+                last_error = error_msg
+                
+                if attempt < max_retries:
+                    print(f"🔄 Будем пробовать еще раз...")
+                    continue
+                else:
+                    print(f"❌ Исчерпаны все {max_retries + 1} попытки")
+                    break
+                    
+        except (TimeoutException, WebDriverException) as e:
+            error_msg = f"Таймаут/WebDriver ошибка: {str(e)}"
+            print(f"❌ Попытка {attempt + 1}: {error_msg}")
+            last_error = error_msg
+            
+            if attempt < max_retries:
+                print(f"🔄 Таймаут! Перезапускаем браузер с новым профилем и прокси...")
+                time.sleep(2)  # Небольшая пауза перед повторной попыткой
+            else:
+                print(f"❌ Исчерпаны все {max_retries + 1} попытки после таймаутов")
+                break
+                
+        except Exception as e:
+            error_msg = f"Неожиданная ошибка: {str(e)}"
+            print(f"❌ Попытка {attempt + 1}: {error_msg}")
+            last_error = error_msg
+            
+            if attempt < max_retries:
+                print(f"🔄 Неожиданная ошибка! Перезапускаем браузер с новым профилем и прокси...")
+                time.sleep(2)  # Небольшая пауза перед повторной попыткой
+            else:
+                print(f"❌ Исчерпаны все {max_retries + 1} попытки после ошибок")
+                break
+    
+    # Если дошли сюда, значит все попытки неуспешны
+    return {
+        "success": False,
+        "error": f"Все {max_retries + 1} попытки неуспешны. Последняя ошибка: {last_error}",
+        "url": url,
+        "retry_attempts": max_retries + 1
+    }
+
 def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None):
     """
     Основная функция для получения отзывов с Яндекс Карт
@@ -1549,9 +1625,41 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         # Подготавливаем URL (добавляем /reviews/ если нужно)
         normalized_url = prepare_reviews_url(url)
         
-        # Загружаем страницу
+        # Загружаем страницу с обработкой таймаутов
         print("🔗 Загружаем страницу...")
-        driver.get(normalized_url)
+        
+        try:
+            # Устанавливаем таймаут для загрузки страницы
+            driver.set_page_load_timeout(30)  # 30 секунд таймаут
+            driver.get(normalized_url)
+            print("✅ Страница успешно загружена!")
+            
+        except Exception as load_error:
+            error_type = type(load_error).__name__
+            error_msg = str(load_error)
+            print(f"❌ Ошибка загрузки страницы: {error_type} - {error_msg}")
+            
+            # Специфическая обработка таймаутов
+            if "timeout" in error_msg.lower() or "TimeoutException" in error_type:
+                print("⏰ ТАЙМАУТ загрузки страницы!")
+                print("🔄 Эта ошибка будет обработана retry механизмом...")
+                
+                # Пробуем получить текущий URL для диагностики
+                try:
+                    current_url = driver.current_url
+                    print(f"📍 Текущий URL: {current_url}")
+                except:
+                    print("📍 Не удалось получить текущий URL")
+                
+                # Делаем скриншот состояния
+                try:
+                    driver.save_screenshot("timeout_error.png")
+                    print("📸 Скриншот таймаута сохранен: timeout_error.png")
+                except:
+                    print("📸 Не удалось сделать скриншот")
+            
+            # Перебрасываем исключение для обработки в retry механизме
+            raise load_error
         
         # БЕЗОПАСНОСТЬ: Случайная пауза для имитации человеческого поведения
         import random
@@ -1716,6 +1824,7 @@ def main():
     DEVICE_TYPE = "mobile"    # Тип устройства: "mobile" или "desktop" 
     WAIT_TIME = 3             # Время ожидания загрузки страницы (секунды)
     USE_PROXY = True          # Использовать прокси по умолчанию
+    MAX_RETRIES = 3           # Количество повторных попыток при таймауте
     # =============================================
     
     # Проверяем аргументы командной строки
@@ -1739,18 +1848,20 @@ def main():
     print(f"   📱 Устройство: {DEVICE_TYPE}")
     print(f"   ⏱️ Время ожидания: {WAIT_TIME} сек")
     print(f"   🌐 Использовать прокси: {'Да' if USE_PROXY else 'Нет'}")
+    print(f"   🔄 Повторные попытки: {MAX_RETRIES}")
     print("=" * 50)
     
     print(f"\n📱 Используем: {DEVICE_TYPE} устройство (iPhone 13) с плавным открытием")
     
-    # Запускаем получение страницы
-    result = get_reviews_page(
+    # Запускаем получение страницы с повторными попытками при таймауте
+    result = get_reviews_page_with_retry(
         url=url, 
         device_type=DEVICE_TYPE, 
         wait_time=WAIT_TIME,
         max_days_back=MAX_DAYS_BACK,
         max_reviews_limit=MAX_REVIEWS_LIMIT,
-        use_proxy=USE_PROXY
+        use_proxy=USE_PROXY,
+        max_retries=MAX_RETRIES
     )
     
     if result["success"]:
