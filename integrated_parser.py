@@ -196,7 +196,8 @@ class IntegratedParser:
         """
         Получает данные листа и группирует их по URL
         
-        Обрабатываются только отзывы со статусом "Модерация" и датой публикации не позднее max_days_back
+        Обрабатываются только отзывы со статусом "Модерация" и датой публикации не позднее max_days_back.
+        Старые отзывы со статусом "Модерация" автоматически отклоняются (статус -> "Отклонен").
         
         Args:
             sheet_name: Название листа
@@ -235,6 +236,7 @@ class IntegratedParser:
             filtered_by_status = 0
             filtered_by_date = 0
             filtered_by_empty_date = 0
+            auto_rejected_count = 0  # Счетчик автоматически отклоненных отзывов
             processed_rows = 0
             
             for index, row in df.iterrows():
@@ -300,6 +302,29 @@ class IntegratedParser:
                         
                         # Проверяем, что дата публикации не старше max_days_back
                         if publication_date_parsed < cutoff_date:
+                            # Если отзыв старый и имеет статус "Модерация", автоматически отклоняем его
+                            if status == "Модерация":
+                                thread_print(f"📅 Автоматическое отклонение старого отзыва: строка {index + 2}, дата {publication_date_str}")
+                                
+                                # Обновляем статус на "Отклонен" в Google Sheets (дату НЕ меняем)
+                                try:
+                                    success = self.sheets_updater.update_review_status(
+                                        spreadsheet_url=self.spreadsheet_url,
+                                        sheet_name=sheet_name,
+                                        row_number=index + 2,
+                                        new_status='Отклонен',
+                                        publication_date=None  # Дату НЕ обновляем
+                                    )
+                                    
+                                    if success:
+                                        thread_print(f"✅ Старый отзыв отклонен: строка {index + 2} -> 'Отклонен'")
+                                        auto_rejected_count += 1
+                                    else:
+                                        thread_print(f"❌ Не удалось отклонить старый отзыв в строке {index + 2}")
+                                        
+                                except Exception as update_error:
+                                    thread_print(f"❌ Ошибка отклонения старого отзыва в строке {index + 2}: {update_error}")
+                            
                             filtered_by_date += 1
                             continue
                             
@@ -329,6 +354,8 @@ class IntegratedParser:
             if has_publication_date_column:
                 thread_print(f"   ❌ Отфильтровано без даты публикации: {filtered_by_empty_date}")
                 thread_print(f"   ❌ Отфильтровано по дате (старше {max_days_back} дней): {filtered_by_date}")
+                if auto_rejected_count > 0:
+                    thread_print(f"   🚫 Автоматически отклонено старых отзывов: {auto_rejected_count}")
                 thread_print(f"   📅 Пороговая дата: {cutoff_date.strftime('%d.%m.%Y')}")
             
             thread_print(f"   ✅ Принято к обработке: {processed_rows}")
