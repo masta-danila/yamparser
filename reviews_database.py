@@ -10,15 +10,10 @@ import hashlib
 from datetime import datetime, date
 from typing import List, Dict, Optional, Union
 import json
+from config import DATABASE_CONFIG
 
-# Настройки подключения к базе данных
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'user': 'daniladzhiev',
-    'password': '',
-    'database': 'reviews'
-}
+# Используем настройки из config.py
+DB_CONFIG = DATABASE_CONFIG
 
 class ReviewsDatabase:
     """Класс для работы с базой данных отзывов"""

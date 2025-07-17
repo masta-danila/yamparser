@@ -10,6 +10,15 @@ SPREADSHEETS = [
 
 CREDENTIALS_FILE = "credentials.json"
 
+# Настройки базы данных PostgreSQL
+DATABASE_CONFIG = {
+    'host': 'localhost',
+    'port': '5432',
+    'database': 'reviews',
+    'user': 'postgres',
+    'password': 'your_password_here'  # ЗАМЕНИТЕ НА ВАШ ПАРОЛЬ!
+}
+
 # Настройки базы данных
 WRITE_TO_DATABASE = False                # Записывать ли данные в БД (если False - только фильтрация по MAX_DAYS_BACK без чекпоинта)
 

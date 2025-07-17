@@ -8,14 +8,10 @@ import psycopg2
 import psycopg2.extensions
 import os
 import sys
+from config import DATABASE_CONFIG
 
-# Настройки подключения к PostgreSQL
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'user': 'daniladzhiev',  # Замените на ваше имя пользователя
-    'password': '',  # Добавьте пароль если нужен
-}
+# Используем настройки из config.py
+DB_CONFIG = DATABASE_CONFIG
 
 def create_database():
     """Создает базу данных reviews если она не существует"""
