@@ -193,26 +193,26 @@ def handle_captcha_automatically(driver, proxy_manager=None, device_type="deskto
         try:
             # Используем продвинутую детекцию CAPTCHA
             captcha_found, captcha_element = captcha_detect(driver)
-            
+        
             if not captcha_found:
                 print("✅ CAPTCHA не обнаружена продвинутым детектором")
                 return driver, True
-            
+        
             print("🎯 CAPTCHA подтверждена, пытаемся решить...")
-            
+        
             # Пытаемся решить CAPTCHA
             success = captcha_solve(driver, captcha_element)
-            
+        
             if success:
                 print("✅ CAPTCHA успешно решена!")
                 return driver, True
             else:
                 print("❌ Не удалось решить CAPTCHA автоматически")
-                
+            
         except Exception as e:
             print(f"❌ Ошибка при автоматическом решении CAPTCHA: {e}")
-    else:
-        print("❌ Модуль решения CAPTCHA недоступен")
+        else:
+            print("❌ Модуль решения CAPTCHA недоступен")
     
     # Если автоматическое решение не сработало, переключаем прокси
     if proxy_manager:

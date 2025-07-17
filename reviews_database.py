@@ -703,6 +703,109 @@ class ReviewsDatabase:
 
 
 # ===============================
+# ФУНКЦИИ ДЛЯ СОВМЕСТИМОСТИ
+# ===============================
+
+def save_reviews_to_db(reviews: list, card_id: str, url: str) -> int:
+    """
+    Сохранить отзывы в базу данных (функция совместимости)
+    
+    Args:
+        reviews: Список отзывов
+        card_id: ID карточки
+        url: URL (не используется)
+        
+    Returns:
+        Количество сохраненных отзывов
+    """
+    # Проверяем настройку записи в БД
+    try:
+        from config import WRITE_TO_DATABASE
+        if not WRITE_TO_DATABASE:
+            print("⚠️ Запись в БД отключена (WRITE_TO_DATABASE=False) - save_reviews_to_db")
+            return 0
+    except ImportError:
+        pass  # Если настройка не найдена, продолжаем (по умолчанию записываем)
+    
+    if not reviews:
+        return 0
+    
+    try:
+        with ReviewsDatabase() as db:
+            saved_count = 0
+            
+            for review in reviews:
+                try:
+                    # Подготавливаем данные для БД
+                    author_name = review.get('author', 'Неизвестный автор')
+                    review_text = review.get('text', '')
+                    review_date = review.get('date', '')
+                    rating = review.get('rating')
+                    
+                    # Преобразуем рейтинг в число
+                    if rating:
+                        try:
+                            rating = float(str(rating).replace(',', '.'))
+                        except (ValueError, TypeError):
+                            rating = None
+                    
+                    # Проверяем уникальность
+                    duplicate = db.check_duplicate_review(
+                        card_id=card_id,
+                        author_name=author_name,
+                        review_date=review_date,
+                        review_text=review_text,
+                        rating=rating
+                    )
+                    
+                    if not duplicate:
+                        # Добавляем новый отзыв
+                        review_id = db.add_review(
+                            card_id=card_id,
+                            author_name=author_name,
+                            review_text=review_text,
+                            review_date=review_date,
+                            rating=rating,
+                            status='found'
+                        )
+                        
+                        if review_id:
+                            saved_count += 1
+                            
+                except Exception as e:
+                    print(f"❌ Ошибка сохранения отзыва: {e}")
+                    continue
+            
+            return saved_count
+            
+    except Exception as e:
+        print(f"❌ Ошибка при сохранении отзывов: {e}")
+        return 0
+
+def get_existing_reviews_count(card_id: str) -> int:
+    """
+    Получить количество существующих отзывов для карточки
+    
+    Args:
+        card_id: ID карточки
+        
+    Returns:
+        Количество отзывов
+    """
+    try:
+        with ReviewsDatabase() as db:
+            cursor = db.connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM yandexmaps WHERE card_id = %s", (card_id,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            return count
+            
+    except Exception as e:
+        print(f"❌ Ошибка получения количества отзывов: {e}")
+        return 0
+
+
+# ===============================
 # ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
 # ===============================
 

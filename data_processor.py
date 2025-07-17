@@ -14,6 +14,12 @@ try:
 except ImportError:
     DATABASE_AVAILABLE = False
 
+# Импорт настроек из config
+try:
+    from config import WRITE_TO_DATABASE
+except ImportError:
+    WRITE_TO_DATABASE = True  # По умолчанию записываем в БД
+
 def create_checkpoint_data(url, card_id, reviews, page_info, stats):
     """Создание данных для checkpoint"""
     checkpoint_data = {
@@ -59,6 +65,10 @@ def save_reviews_to_database(reviews, card_id, url):
         print("❌ Модуль базы данных недоступен")
         return False, 0, 0
     
+    if not WRITE_TO_DATABASE:
+        print("⚠️ Запись в БД отключена (WRITE_TO_DATABASE=False)")
+        return True, 0, 0
+    
     if not reviews:
         print("⚠️ Нет отзывов для сохранения")
         return True, 0, 0
@@ -95,11 +105,14 @@ def process_and_save_results(reviews, card_id, url, checkpoint_file=None, page_i
     
     try:
         # Сохранение в базу данных
-        if DATABASE_AVAILABLE:
+        if DATABASE_AVAILABLE and WRITE_TO_DATABASE:
             db_success, saved_count, existing_count = save_reviews_to_database(reviews, card_id, url)
             results['saved_to_db'] = db_success
             results['db_saved_count'] = saved_count
             results['db_existing_count'] = existing_count
+        elif not WRITE_TO_DATABASE:
+            print("⚠️ Пропускаем сохранение в БД (WRITE_TO_DATABASE=False)")
+            results['saved_to_db'] = True  # Считаем успешным, просто не сохраняем
         
         # Создание статистики
         stats = {

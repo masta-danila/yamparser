@@ -365,7 +365,7 @@ if __name__ == "__main__":
             thread_print(f"  📋 URL-ов в батче: {worker_data['urls_processed']}")
             thread_print(f"  ✅ Успешно: {worker_data['urls_successful']}")
             thread_print(f"  ❌ Ошибок: {worker_data['urls_failed']}")
-            thread_print(f"  ⏱️ Общее время: {worker_data['total_batch_time']:.1f} секунд")
+            thread_print(f"  ⏱️ Общее время: {worker_data['total_batch_time']:.1f} секунд") 
     
     # Финальная очистка всех профилей
     cleanup_all_profiles() 

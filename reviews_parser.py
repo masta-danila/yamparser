@@ -15,6 +15,12 @@ from data_processor import (
 )
 from thread_logger import thread_print
 
+# Импорт настроек из config
+try:
+    from config import WRITE_TO_DATABASE
+except ImportError:
+    WRITE_TO_DATABASE = True  # По умолчанию записываем в БД
+
 # Стандартные импорты
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -1319,6 +1325,10 @@ def save_reviews_to_database(reviews_data: list, card_id: str) -> dict:
         print("⚠️ База данных недоступна - пропускаем сохранение")
         return {"saved": 0, "duplicates": 0, "errors": 0}
     
+    if not WRITE_TO_DATABASE:
+        print("⚠️ Запись в БД отключена (WRITE_TO_DATABASE=False) - пропускаем сохранение")
+        return {"saved": 0, "duplicates": 0, "errors": 0}
+    
     if not reviews_data or not card_id:
         print("⚠️ Нет данных для сохранения")
         return {"saved": 0, "duplicates": 0, "errors": 0}
@@ -1420,7 +1430,7 @@ def print_reviews(reviews_data):
 
 def get_checkpoint_info(card_id: str) -> dict:
     """Получить информацию о checkpoint для карточки"""
-    if not DATABASE_AVAILABLE:
+    if not DATABASE_AVAILABLE or not WRITE_TO_DATABASE:
         return {"has_checkpoint": False, "last_date": None, "total_reviews": 0}
     
     try:
@@ -1458,7 +1468,7 @@ def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) 
     if not checkpoint_info.get("has_checkpoint"):
         return False  # Нет checkpoint - продолжаем
     
-    if not DATABASE_AVAILABLE:
+    if not DATABASE_AVAILABLE or not WRITE_TO_DATABASE:
         return False
     
     try:
@@ -1586,11 +1596,14 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
     # Определяем стратегию парсинга на основе checkpoint
     checkpoint_info = get_checkpoint_info(card_id)
     
-    if checkpoint_info['has_checkpoint']:
+    if checkpoint_info['has_checkpoint'] and WRITE_TO_DATABASE:
         print("🔄 ИНКРЕМЕНТАЛЬНЫЙ парсинг до checkpoint")
         parsing_strategy = "incremental"
     else:
-        print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней".format(max_days_back))
+        if not WRITE_TO_DATABASE:
+            print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней (запись в БД отключена)".format(max_days_back))
+        else:
+            print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней".format(max_days_back))
         parsing_strategy = "initial"
     
     # Инициализация менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)

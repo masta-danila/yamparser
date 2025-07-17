@@ -442,34 +442,42 @@ class IntegratedParser:
             
             thread_print(f"📊 Результаты БД: сохранено={new_reviews_count}, дубликатов={db_results.get('duplicates', 0)}")
             
-            # Получаем отзывы из базы данных для проверки совпадений
-            from reviews_database import ReviewsDatabase
-            
-            if new_reviews_count > 0:
-                # Получаем последние N отзывов из БД (которые только что сохранились)
-                try:
-                    with ReviewsDatabase() as db:
-                        latest_reviews = db.get_latest_reviews(card_id, new_reviews_count)
-                        result['new_reviews'] = latest_reviews
-                        result['parsed_reviews'] = latest_reviews
-                        thread_print(f"🆕 Новых отзывов для проверки: {len(latest_reviews)}")
-                except Exception as e:
-                    thread_print(f"❌ Ошибка получения отзывов из БД: {e}")
-                    result['new_reviews'] = []
-                    result['parsed_reviews'] = []
+            # Получаем отзывы для проверки совпадений
+            if WRITE_TO_DATABASE:
+                # Получаем отзывы из базы данных
+                from reviews_database import ReviewsDatabase
+                
+                if new_reviews_count > 0:
+                    # Получаем последние N отзывов из БД (которые только что сохранились)
+                    try:
+                        with ReviewsDatabase() as db:
+                            latest_reviews = db.get_latest_reviews(card_id, new_reviews_count)
+                            result['new_reviews'] = latest_reviews
+                            result['parsed_reviews'] = latest_reviews
+                            thread_print(f"🆕 Новых отзывов для проверки: {len(latest_reviews)}")
+                    except Exception as e:
+                        thread_print(f"❌ Ошибка получения отзывов из БД: {e}")
+                        result['new_reviews'] = []
+                        result['parsed_reviews'] = []
+                else:
+                    thread_print("ℹ️ Новых отзывов не найдено - все отзывы уже были в БД")
+                    # Получаем все отзывы этой карточки для проверки совпадений
+                    try:
+                        with ReviewsDatabase() as db:
+                            all_reviews = db.get_reviews_by_card_id(card_id)
+                            result['new_reviews'] = all_reviews
+                            result['parsed_reviews'] = all_reviews
+                            thread_print(f"🔄 Проверяем все {len(all_reviews)} отзывов на совпадения")
+                    except Exception as e:
+                        thread_print(f"❌ Ошибка получения отзывов из БД: {e}")
+                        result['new_reviews'] = []
+                        result['parsed_reviews'] = []
             else:
-                thread_print("ℹ️ Новых отзывов не найдено - все отзывы уже были в БД")
-                # Получаем все отзывы этой карточки для проверки совпадений
-                try:
-                    with ReviewsDatabase() as db:
-                        all_reviews = db.get_reviews_by_card_id(card_id)
-                        result['new_reviews'] = all_reviews
-                        result['parsed_reviews'] = all_reviews
-                        thread_print(f"🔄 Проверяем все {len(all_reviews)} отзывов на совпадения")
-                except Exception as e:
-                    thread_print(f"❌ Ошибка получения отзывов из БД: {e}")
-                    result['new_reviews'] = []
-                    result['parsed_reviews'] = []
+                # Используем отзывы напрямую из результата парсинга (БД отключена)
+                parsed_reviews = yandex_result.get('reviews', [])
+                result['new_reviews'] = parsed_reviews
+                result['parsed_reviews'] = parsed_reviews
+                thread_print(f"📝 Используем отзывы из парсинга (БД отключена): {len(parsed_reviews)}")
             
             # Ищем совпадения только среди новых отзывов
             matches = self.text_matcher.find_matches_in_reviews(
@@ -1080,35 +1088,14 @@ def main():
     cleanup_all_profiles()
 
 
-# ============================================================================
-# НАСТРОЙКИ КОНФИГУРАЦИИ
-# ============================================================================
 
-# Настройки Google Sheets (список таблиц для обработки)
-SPREADSHEETS = [
-    # "https://docs.google.com/spreadsheets/d/142AAz6o3tSygBLhyRftCrhLUb8SyK1RO0qa-l7uPC3M/edit?gid=1343994181#gid=1343994181" #бустра
-    # "https://docs.google.com/spreadsheets/d/1oVylAVck8SGaCpVD0T8_FTXEuaNMIUv1BVOXCttSQuo/" #4 листа
-    # "https://docs.google.com/spreadsheets/d/10v9VFoD6g-RRLLs_nG4PksfV_ZVLL5klxeTOD3WCrok/",
-    # "https://docs.google.com/spreadsheets/d/1prLF8cF6wpdGkOdgDyZLZ8MHbG0NbdfN_rVQ-ilYX3Y/"
-    "https://docs.google.com/spreadsheets/d/15vhtopNKH0ulJt7RS_cI04d_OrB-SLUWc03yxMhENwo/"
-]
-
-CREDENTIALS_FILE = "credentials.json"
-
-# Настройки сравнения текстов
-SIMILARITY_THRESHOLD = 0.85             # Порог совпадения текстов (85%)
-
-# Настройки парсинга
-DEVICE_TYPE = "mobile"                  # Тип устройства: "mobile" или "desktop"
-WAIT_TIME = 3                           # Время ожидания в секундах
-MAX_DAYS_BACK = 30                      # Максимальное количество дней назад для первичного парсинга
-MAX_REVIEWS_LIMIT = 1000                 # Максимальное количество отзывов для парсинга
-USE_PROXY = True                        # Использовать ли прокси
-
-# Настройки потоков
-MAX_WORKERS = 20                         # Максимальное количество потоков
-DELAY_BETWEEN_WORKERS = 2               # Задержка между запуском потоков (секунды)
-DELAY_BETWEEN_URLS = 1                  # Пауза между URL-ами в одном потоке (секунды)
+# Импортируем все настройки из config.py
+from config import (
+    SPREADSHEETS, CREDENTIALS_FILE, WRITE_TO_DATABASE, 
+    DEVICE_TYPE, WAIT_TIME, MAX_DAYS_BACK, MAX_REVIEWS_LIMIT, 
+    USE_PROXY, SIMILARITY_THRESHOLD, MAX_WORKERS, 
+    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS
+)
 
 # ============================================================================
 
