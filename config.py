@@ -11,7 +11,7 @@ SPREADSHEETS = [
 CREDENTIALS_FILE = "credentials.json"
 
 # Настройки базы данных
-WRITE_TO_DATABASE = True                # Записывать ли данные в БД (если False - только фильтрация по MAX_DAYS_BACK без чекпоинта)
+WRITE_TO_DATABASE = False                # Записывать ли данные в БД (если False - только фильтрация по MAX_DAYS_BACK без чекпоинта)
 
 # Настройки парсинга
 DEVICE_TYPE = "mobile"                  # Тип устройства: "mobile" или "desktop"
