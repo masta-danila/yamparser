@@ -35,7 +35,7 @@ def create_database():
         exists = cursor.fetchone()
         
         if not exists:
-            cursor.execute("CREATE DATABASE reviews WITH ENCODING 'UTF8' LC_COLLATE='C' LC_CTYPE='C'")
+            cursor.execute("CREATE DATABASE reviews WITH ENCODING 'UTF8' TEMPLATE template0")
             print("✅ База данных 'reviews' создана успешно!")
         else:
             print("ℹ️  База данных 'reviews' уже существует")
