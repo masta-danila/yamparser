@@ -14,6 +14,12 @@ import tempfile
 import shutil
 from thread_logger import thread_print
 
+# Импорт настроек из config
+try:
+    from config import HEADLESS_MODE
+except ImportError:
+    HEADLESS_MODE = False  # По умолчанию показываем браузеры
+
 # Импорт seleniumwire для рабочих прокси
 try:
     from seleniumwire import webdriver as wiredriver
@@ -104,7 +110,14 @@ def setup_driver(device_type="desktop", proxy_manager=None, profile_path=None):
     
     # Настройки браузера
     options = Options()
-    # options.add_argument("--headless")  # Оставляем видимым
+    
+    # Проверяем настройку показа браузеров
+    if HEADLESS_MODE:
+        options.add_argument("--headless")
+        thread_print("🔇 Браузер запущен в скрытом режиме (headless)")
+    else:
+        thread_print("👁️ Браузер будет видимым")
+        
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
