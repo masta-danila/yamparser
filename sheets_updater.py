@@ -260,4 +260,265 @@ class SheetsUpdater:
             'similarity': match['similarity_percent']
         }
         
-        return update_data 
+        return update_data
+    
+    def batch_reject_old_reviews(self, spreadsheet_url: str, max_days_back: int = 30) -> Dict[str, int]:
+        """
+        Батчевое отклонение старых отзывов ДО парсинга
+        
+        Args:
+            spreadsheet_url: URL таблицы Google Sheets
+            max_days_back: Количество дней назад для определения старых отзывов
+            
+        Returns:
+            Словарь с результатами: {'success': count, 'failed': count}
+        """
+        if not self.gc:
+            thread_print("❌ Google Sheets API не настроен")
+            return {'success': 0, 'failed': 0}
+        
+        thread_print(f"🚀 БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов (старше {max_days_back} дней)")
+        
+        results = {'success': 0, 'failed': 0}
+        all_rejections = []  # Накопитель ВСЕХ отклонений из ВСЕХ листов
+        
+        try:
+            # Открываем таблицу
+            spreadsheet_id = self.extract_spreadsheet_id(spreadsheet_url)
+            spreadsheet = self.gc.open_by_key(spreadsheet_id)
+            worksheets = spreadsheet.worksheets()
+            
+            # Дата для сравнения
+            from datetime import datetime, timedelta
+            threshold_date = datetime.now() - timedelta(days=max_days_back)
+            threshold_date_str = threshold_date.strftime('%d.%m.%Y')
+            
+            thread_print(f"📅 Пороговая дата: {threshold_date_str}")
+            
+            # ПЕРВЫЙ ЭТАП: Собираем ВСЕ старые отзывы из ВСЕХ листов
+            for worksheet in worksheets:
+                sheet_name = worksheet.title
+                thread_print(f"📋 Обрабатываем лист: '{sheet_name}'")
+                
+                try:
+                    # Получаем все данные листа
+                    all_values = worksheet.get_all_values()
+                    if not all_values or len(all_values) < 2:
+                        thread_print(f"⚠️ Лист '{sheet_name}' пуст или нет данных")
+                        continue
+                    
+                    headers = all_values[0]
+                    
+                    # Находим нужные колонки
+                    status_col = None
+                    date_col = None
+                    
+                    for i, header in enumerate(headers):
+                        if header == "Статус":
+                            status_col = i + 1  # gspread использует 1-based индексы
+                        elif header == "Дата публикации":
+                            date_col = i + 1
+                    
+                    if not status_col or not date_col:
+                        thread_print(f"⚠️ В листе '{sheet_name}' не найдены колонки 'Статус' или 'Дата публикации'")
+                        continue
+                    
+                    # Находим старые отзывы с статусом "Модерация"
+                    old_reviews = []
+                    for row_idx, row_data in enumerate(all_values[1:], start=2):  # Начинаем с 2 строки
+                        if len(row_data) <= max(status_col, date_col) - 1:
+                            continue
+                        
+                        current_status = row_data[status_col - 1] if len(row_data) > status_col - 1 else ""
+                        current_date = row_data[date_col - 1] if len(row_data) > date_col - 1 else ""
+                        
+                        if current_status.strip() == "Модерация" and current_date:
+                            try:
+                                # Парсим дату публикации
+                                review_date = datetime.strptime(current_date.strip(), '%d.%m.%Y')
+                                if review_date < threshold_date:
+                                    old_reviews.append({
+                                        'row': row_idx,
+                                        'date': current_date,
+                                        'range': f'{self._get_column_letter(status_col)}{row_idx}'
+                                    })
+                                    thread_print(f"📅 Старый отзыв: строка {row_idx}, дата {current_date}")
+                            except ValueError:
+                                # Неверный формат даты
+                                continue
+                    
+                    # Накапливаем обновления для последующего батча
+                    if old_reviews:
+                        for review in old_reviews:
+                            all_rejections.append({
+                                'worksheet': worksheet,
+                                'sheet_name': sheet_name,
+                                'range': review['range'],
+                                'row': review['row'],
+                                'date': review['date']
+                            })
+                        
+                        thread_print(f"📝 Лист '{sheet_name}': найдено {len(old_reviews)} старых отзывов для отклонения")
+                        results['success'] += len(old_reviews)
+                    else:
+                        thread_print(f"ℹ️ Лист '{sheet_name}': нет старых отзывов для отклонения")
+                
+                except Exception as e:
+                    thread_print(f"❌ Ошибка обработки листа '{sheet_name}': {e}")
+                    results['failed'] += 1
+            
+            # ВТОРОЙ ЭТАП: Выполняем ВСЕ накопленные отклонения ОДНИМ БАТЧЕМ
+            if all_rejections:
+                thread_print(f"\n🚀 УЛЬТРА-БАТЧ: Выполняем {len(all_rejections)} отклонений одним вызовом...")
+                
+                # Группируем по листам для батчевого обновления
+                grouped_by_sheet = {}
+                for rejection in all_rejections:
+                    sheet_name = rejection['sheet_name']
+                    if sheet_name not in grouped_by_sheet:
+                        grouped_by_sheet[sheet_name] = {
+                            'worksheet': rejection['worksheet'],
+                            'updates': []
+                        }
+                    
+                    grouped_by_sheet[sheet_name]['updates'].append({
+                        'range': rejection['range'],
+                        'values': [['Отклонен']]
+                    })
+                
+                # Выполняем батчевое обновление для каждого листа
+                total_updated = 0
+                for sheet_name, sheet_data in grouped_by_sheet.items():
+                    try:
+                        worksheet = sheet_data['worksheet']
+                        updates = sheet_data['updates']
+                        
+                        # Выполняем батчевое обновление для листа
+                        worksheet.batch_update(updates)
+                        
+                        total_updated += len(updates)
+                        thread_print(f"✅ Лист '{sheet_name}': батчево обновлено {len(updates)} записей")
+                        
+                    except Exception as e:
+                        thread_print(f"❌ Ошибка батчевого обновления листа '{sheet_name}': {e}")
+                        results['failed'] += len(updates)
+                        results['success'] -= len(updates)  # Корректируем счетчик
+                
+                thread_print(f"🎯 УЛЬТРА-БАТЧ завершен: обновлено {total_updated} записей")
+            else:
+                thread_print("ℹ️ Нет старых отзывов для отклонения во всей таблице")
+        
+        except Exception as e:
+            thread_print(f"❌ Ошибка батчевого отклонения: {e}")
+            results['failed'] += 1
+        
+        thread_print(f"🎯 БАТЧЕВОЕ ОТКЛОНЕНИЕ завершено: {results['success']} успешно, {results['failed']} ошибок")
+        return results
+    
+    def batch_update_to_placed(self, placement_updates: List[Dict]) -> Dict[str, int]:
+        """
+        Батчевое обновление найденных совпадений на "Размещен" ПОСЛЕ парсинга
+        
+        Args:
+            placement_updates: Список обновлений с данными для размещения
+                              Каждый элемент должен содержать:
+                              - spreadsheet_url: URL таблицы
+                              - sheet_name: Название листа  
+                              - row: Номер строки
+                              - date: Дата публикации (опционально)
+                              
+        Returns:
+            Словарь с результатами: {'success': count, 'failed': count}
+        """
+        if not placement_updates:
+            thread_print("⚠️ Нет данных для батчевого размещения")
+            return {'success': 0, 'failed': 0}
+        
+        if not self.gc:
+            thread_print("❌ Google Sheets API не настроен")
+            return {'success': 0, 'failed': len(placement_updates)}
+        
+        thread_print(f"🚀 БАТЧЕВОЕ РАЗМЕЩЕНИЕ {len(placement_updates)} найденных совпадений")
+        
+        # Группируем обновления по таблицам и листам
+        grouped_updates = {}
+        for update in placement_updates:
+            key = (update['spreadsheet_url'], update['sheet_name'])
+            if key not in grouped_updates:
+                grouped_updates[key] = []
+            grouped_updates[key].append(update)
+        
+        results = {'success': 0, 'failed': 0}
+        
+        # Обрабатываем каждую группу (таблица + лист)
+        for (spreadsheet_url, sheet_name), sheet_updates in grouped_updates.items():
+            try:
+                thread_print(f"📋 Размещаем в листе '{sheet_name}': {len(sheet_updates)} записей")
+                
+                # Открываем таблицу и лист
+                spreadsheet_id = self.extract_spreadsheet_id(spreadsheet_url)
+                spreadsheet = self.gc.open_by_key(spreadsheet_id)
+                worksheet = spreadsheet.worksheet(sheet_name)
+                
+                # Получаем заголовки для определения колонок
+                headers = worksheet.row_values(1)
+                
+                # Находим индексы нужных колонок
+                status_col = None
+                date_col = None
+                
+                for i, header in enumerate(headers, 1):
+                    if header == "Статус":
+                        status_col = i
+                    elif header == "Дата публикации":
+                        date_col = i
+                
+                if not status_col:
+                    thread_print(f"❌ Колонка 'Статус' не найдена в листе '{sheet_name}'")
+                    results['failed'] += len(sheet_updates)
+                    continue
+                
+                # Подготавливаем данные для батчевого обновления
+                batch_data = []
+                
+                for update in sheet_updates:
+                    row_number = update['row']
+                    publication_date = update.get('date')
+                    
+                    # Обновление статуса на "Размещен"
+                    batch_data.append({
+                        'range': f'{self._get_column_letter(status_col)}{row_number}',
+                        'values': [['Размещен']]
+                    })
+                    
+                    # Обновление даты если указана
+                    if publication_date and date_col:
+                        batch_data.append({
+                            'range': f'{self._get_column_letter(date_col)}{row_number}',
+                            'values': [[publication_date]]
+                        })
+                
+                # Выполняем батчевое обновление
+                if batch_data:
+                    worksheet.batch_update(batch_data)
+                    
+                    thread_print(f"✅ Лист '{sheet_name}': размещено {len(sheet_updates)} записей")
+                    results['success'] += len(sheet_updates)
+                else:
+                    thread_print(f"⚠️ Лист '{sheet_name}': нет данных для размещения")
+                
+            except Exception as e:
+                thread_print(f"❌ Ошибка батчевого размещения в листе '{sheet_name}': {e}")
+                results['failed'] += len(sheet_updates)
+        
+        thread_print(f"🎯 БАТЧЕВОЕ РАЗМЕЩЕНИЕ завершено: {results['success']} успешно, {results['failed']} ошибок")
+        return results
+    
+    def _get_column_letter(self, col_num: int) -> str:
+        """Преобразует номер колонки в букву (1=A, 2=B, и т.д.)"""
+        result = ""
+        while col_num > 0:
+            col_num -= 1
+            result = chr(col_num % 26 + ord('A')) + result
+            col_num //= 26
+        return result 

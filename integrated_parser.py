@@ -508,21 +508,8 @@ class IntegratedParser:
                         # Получаем дату публикации из отзыва с карточки
                         publication_date = self._format_date_for_sheets(parsed_review.get('date', ''))
                         
-                        # Обновляем статус сразу же
-                        success = self.sheets_updater.update_review_status(
-                            spreadsheet_url=self.spreadsheet_url,
-                            sheet_name=sheet_name,
-                            row_number=sheet_review['row'],
-                            new_status='Размещен',
-                            publication_date=publication_date
-                        )
-                        
-                        if success:
-                            thread_print(f"✅ Статус обновлен: строка {sheet_review['row']} -> 'Размещен'")
-                            result['sheets_updated'] = result.get('sheets_updated', 0) + 1
-                        else:
-                            thread_print(f"❌ Не удалось обновить статус для строки {sheet_review['row']}")
-                            result['sheets_update_errors'] = result.get('sheets_update_errors', 0) + 1
+                        # Статус будет обновлен в ЭТАПЕ 3 (батчевое размещение)
+                        thread_print(f"📝 Совпадение добавлено для батчевого размещения: строка {sheet_review['row']}")
                         
                         # Подготавливаем данные для совместимости
                         update_data = {
@@ -620,18 +607,9 @@ class IntegratedParser:
                 if i < len(urls_data):
                     time.sleep(delay_between_urls)
             
-            # Обновляем статусы в Google Sheets
+            # Статусы будут обновлены централизованно в ЭТАПЕ 3
             if all_updates:
-                thread_print(f"📝 Поток {worker_id}: Обновляем {len(all_updates)} статусов...")
-                
-                update_results = self.sheets_updater.batch_update_reviews(all_updates)
-                self.results['total_updates'] += update_results['success']
-                
-                if update_results['failed'] > 0:
-                    self.results['errors'].append({
-                        'sheet': sheet_name,
-                        'error': f"Не удалось обновить {update_results['failed']} статусов"
-                    })
+                thread_print(f"📝 Поток {worker_id}: Накоплено {len(all_updates)} обновлений для финального батча")
             
             # Обновляем статистику
             with self.lock:
@@ -823,6 +801,31 @@ def main():
     
     print(f"📊 Найдено таблиц для обработки: {len(SPREADSHEETS)}")
     
+    # ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов ДО парсинга
+    print(f"\n🚀 ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов во всех таблицах")
+    print("="*70)
+    
+    from sheets_updater import SheetsUpdater
+    batch_updater = SheetsUpdater(CREDENTIALS_FILE)
+    
+    total_rejections = 0
+    for i, spreadsheet_url in enumerate(SPREADSHEETS, 1):
+        print(f"📋 Обрабатываем таблицу {i}/{len(SPREADSHEETS)}")
+        
+        rejection_results = batch_updater.batch_reject_old_reviews(
+            spreadsheet_url=spreadsheet_url,
+            max_days_back=MAX_DAYS_BACK
+        )
+        
+        total_rejections += rejection_results['success']
+        print(f"✅ Таблица {i}: отклонено {rejection_results['success']} старых отзывов")
+    
+    print(f"\n🎯 ИТОГ ЭТАПА 1: Всего отклонено {total_rejections} старых отзывов")
+    print("="*70)
+    
+    # ЭТАП 2: Сбор URL для парсинга (после отклонения старых)
+    print(f"\n📋 ЭТАП 2: Сбор URL для парсинга...")
+    
     # Собираем ВСЕ URL из ВСЕХ листов ВСЕХ таблиц
     all_urls = []  # Список кортежей (spreadsheet_url, sheet_name, url, sheet_reviews)
     reader = GoogleSheetsReader(CREDENTIALS_FILE)
@@ -907,6 +910,7 @@ def main():
         'processed_urls': 0,
         'total_matches': 0,
         'total_updates': 0,
+        'placement_updates': [],  # Накопитель для финального батчевого размещения
         'total_time': 0,
         'errors': []
     }
@@ -949,6 +953,7 @@ def main():
             'processed_urls': 0,
             'total_matches': 0,
             'total_updates': 0,
+            'placement_updates': [],  # Накопитель для батчевого размещения
             'errors': []
         }
         
@@ -982,6 +987,16 @@ def main():
                 if url_result['matches']:
                     local_results['total_matches'] += len(url_result['matches'])
                     local_results['total_updates'] += len(url_result['updates'])
+                    
+                    # Накапливаем данные для батчевого размещения
+                    for update in url_result.get('updates', []):
+                        placement_data = {
+                            'spreadsheet_url': spreadsheet_url,
+                            'sheet_name': sheet_name,
+                            'row': update.get('row'),
+                            'date': update.get('date')
+                        }
+                        local_results['placement_updates'].append(placement_data)
                 
                 if url_result['error']:
                     local_results['errors'].append({
@@ -1010,6 +1025,7 @@ def main():
             total_results['processed_urls'] += local_results['processed_urls']
             total_results['total_matches'] += local_results['total_matches']
             total_results['total_updates'] += local_results['total_updates']
+            total_results['placement_updates'].extend(local_results['placement_updates'])
             total_results['errors'].extend(local_results['errors'])
         
         print(f"🧵 Поток {worker_id}: Батч завершен")
@@ -1059,6 +1075,20 @@ def main():
     print(f"📝 Всего обновлений: {total_results['total_updates']}")
     print(f"⏱️ Общее время: {total_results['total_time']:.1f} секунд")
     print(f"👥 Использовано потоков: {actual_workers}")
+    
+    # ЭТАП 3: БАТЧЕВОЕ РАЗМЕЩЕНИЕ найденных совпадений ПОСЛЕ парсинга
+    if total_results['placement_updates']:
+        print(f"\n🚀 ЭТАП 3: БАТЧЕВОЕ РАЗМЕЩЕНИЕ найденных совпадений")
+        print("="*70)
+        
+        placement_results = batch_updater.batch_update_to_placed(total_results['placement_updates'])
+        
+        print(f"🎯 ИТОГ ЭТАПА 3: Размещено {placement_results['success']} найденных совпадений")
+        if placement_results['failed'] > 0:
+            print(f"❌ Ошибок размещения: {placement_results['failed']}")
+        print("="*70)
+    else:
+        print(f"\nℹ️ ЭТАП 3: Нет найденных совпадений для размещения")
     
     if total_results['errors']:
         print(f"\n❌ Ошибки ({len(total_results['errors'])}):")
