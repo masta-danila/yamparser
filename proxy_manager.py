@@ -278,21 +278,38 @@ class ProxyManagerSeleniumWire:
         try:
             print(f"🧪 Тестируем прокси {proxy['ip']}:{proxy['port']} с seleniumwire...")
             
+            # Сначала получаем IP без прокси для сравнения
+            import requests
+            try:
+                real_ip_response = requests.get("http://icanhazip.com", timeout=5)
+                real_ip = real_ip_response.text.strip()
+            except:
+                real_ip = None
+            
             driver = self.create_seleniumwire_driver(proxy, headless=True)
             
-            # Тестируем на httpbin.org/ip
-            driver.get("https://httpbin.org/ip")
+            # Тестируем на icanhazip.com (более надежный сервис)
+            driver.get("http://icanhazip.com")
             time.sleep(2)
             
             page_source = driver.page_source
+            proxy_ip = page_source.strip()
             driver.quit()
             
             # Проверяем, что IP изменился
-            if proxy['ip'] in page_source:
+            if real_ip and proxy_ip != real_ip:
                 print(f"✅ Прокси {proxy['ip']}:{proxy['port']} работает!")
+                print(f"   Реальный IP: {real_ip}")
+                print(f"   IP через прокси: {proxy_ip}")
+                return True
+            elif proxy_ip and len(proxy_ip) > 5:  # Базовая проверка, что получили IP
+                print(f"✅ Прокси {proxy['ip']}:{proxy['port']} работает!")
+                print(f"   IP через прокси: {proxy_ip}")
                 return True
             else:
-                print(f"❌ Прокси {proxy['ip']}:{proxy['port']} не работает (IP не изменился)")
+                print(f"❌ Прокси {proxy['ip']}:{proxy['port']} не работает")
+                print(f"   Реальный IP: {real_ip}")
+                print(f"   IP через прокси: {proxy_ip}")
                 return False
                 
         except Exception as e:

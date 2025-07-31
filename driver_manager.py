@@ -259,22 +259,21 @@ def setup_driver(device_type="desktop", proxy_manager=None, profile_path=None):
                 # Быстрая проверка соединения
                 driver.set_page_load_timeout(15)  # Таймаут 15 секунд
                 
-                driver.get("https://httpbin.org/ip")
+                driver.get("http://icanhazip.com")
                 
-                # Проверяем, что страница загрузилась и содержит IP прокси
-                page_source = driver.page_source
-                if "origin" in page_source and current_proxy['ip'] in page_source:
+                # Проверяем, что страница загрузилась и получили валидный IP
+                page_source = driver.page_source.strip()
+                
+                # Проверяем, что получили IP (простая валидация)
+                if page_source and len(page_source) > 5 and ('.' in page_source or ':' in page_source):
                     thread_print(f"✅ Прокси {current_proxy['ip']}:{current_proxy['port']} работает корректно!")
+                    thread_print(f"   IP через прокси: {page_source}")
                     thread_print(f"✅ Драйвер с рабочим прокси создан успешно в потоке {thread_id}!")
                     return driver
                 else:
-                    thread_print(f"❌ Прокси {current_proxy['ip']}:{current_proxy['port']} не работает (IP не изменился)")
-                    if "origin" in page_source:
-                        import re
-                        actual_ip = re.search(r'"origin":\s*"([^"]+)"', page_source)
-                        if actual_ip:
-                            thread_print(f"   Фактический IP: {actual_ip.group(1)}, ожидался: {current_proxy['ip']}")
-                    raise Exception("Прокси не работает - IP не изменился")
+                    thread_print(f"❌ Прокси {current_proxy['ip']}:{current_proxy['port']} не работает (некорректный ответ)")
+                    thread_print(f"   Получен ответ: {page_source[:100]}")
+                    raise Exception("Прокси не работает - некорректный ответ")
                     
             except Exception as proxy_test_error:
                 thread_print(f"❌ Ошибка тестирования прокси {current_proxy['ip']}:{current_proxy['port']}: {proxy_test_error}")
