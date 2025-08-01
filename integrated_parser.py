@@ -15,8 +15,8 @@ from collections import defaultdict
 # Импорт основных модулей
 from reviews_parser import get_reviews_page_with_retry
 from google_sheets_reader import GoogleSheetsReader
-from text_matcher import TextMatcher
 from sheets_updater import SheetsUpdater
+from text_matcher import TextMatcher
 from thread_logger import thread_print
 from driver_manager import get_driver_creation_lock, initialize_profiles_cleanup, cleanup_all_profiles
 
@@ -232,7 +232,6 @@ class IntegratedParser:
             # Статистика фильтрации
             total_rows = 0
             filtered_by_empty = 0
-            filtered_by_url = 0
             filtered_by_status = 0
             filtered_by_date = 0
             filtered_by_empty_date = 0
@@ -241,20 +240,18 @@ class IntegratedParser:
             
             for index, row in df.iterrows():
                 total_rows += 1
-                url = row.get('Ссылка', '').strip()
+                card_id = row.get('id карточки', '').strip()
                 review_text = row.get('Текст отзыва', '').strip()
                 status = row.get('Статус', '').strip()
                 publication_date = row.get('Дата публикации', '') if has_publication_date_column else None
                 
-                # Пропускаем строки без URL или с пустым текстом отзыва
-                if not url or not review_text:
+                # Пропускаем строки без id карточки или с пустым текстом отзыва
+                if not card_id or not review_text:
                     filtered_by_empty += 1
                     continue
                 
-                # Проверяем, что URL корректный
-                if "yandex.ru/maps/org/" not in url:
-                    filtered_by_url += 1
-                    continue
+                # Формируем URL из ID карточки (название не важно - Яндекс сделает редирект)
+                url = f"https://yandex.ru/maps/org/{card_id}/reviews/"
                 
                 # Берем в работу только отзывы со статусом "Модерация"
                 if status != "Модерация":
@@ -338,6 +335,7 @@ class IntegratedParser:
                     'status': status,
                     'row': index + 2,  # +2 потому что индекс 0-based, а строки 1-based + заголовок
                     'url': url,
+                    'card_id': card_id,  # Сохраняем ID карточки
                     'publication_date': publication_date if has_publication_date_column else None
                 }
                 
@@ -347,8 +345,7 @@ class IntegratedParser:
             # Выводим статистику фильтрации
             thread_print(f"📊 Статистика фильтрации листа '{sheet_name}':")
             thread_print(f"   📝 Всего строк: {total_rows}")
-            thread_print(f"   ❌ Отфильтровано пустых: {filtered_by_empty}")
-            thread_print(f"   ❌ Отфильтровано некорректных URL: {filtered_by_url}")
+            thread_print(f"   ❌ Отфильтровано пустых (без id карточки или текста): {filtered_by_empty}")
             thread_print(f"   ❌ Отфильтровано по статусу (не 'Модерация'): {filtered_by_status}")
             
             if has_publication_date_column:
@@ -368,7 +365,7 @@ class IntegratedParser:
             thread_print(f"❌ {error_msg}")
             return {'urls': {}, 'error': error_msg}
     
-    def process_url_reviews(self, url: str, sheet_reviews: List[Dict], sheet_name: str,
+    def process_url_reviews(self, url: str, card_id: str, sheet_reviews: List[Dict], sheet_name: str,
                           device_type: str = "mobile", max_days_back: int = 30,
                           max_reviews_limit: int = 100) -> Dict[str, Any]:
         """
@@ -376,6 +373,7 @@ class IntegratedParser:
         
         Args:
             url: URL для парсинга
+            card_id: ID карточки (уже известен из таблицы)
             sheet_reviews: Список отзывов из таблицы
             sheet_name: Имя листа
             device_type: Тип устройства
@@ -388,19 +386,17 @@ class IntegratedParser:
         thread_print(f"🌐 Обработка URL: {url}")
         
         try:
-            # Подготавливаем URL (добавляем /reviews/ если нужно)
-            from page_handler import prepare_reviews_url
-            normalized_url = prepare_reviews_url(url)
-            
+            # URL уже готов в нужном формате с /reviews/
             # Получаем отзывы с Яндекс.Карт (с повторными попытками при таймауте)
             yandex_result = get_reviews_page_with_retry(
-                url=normalized_url,
+                url=url,
                 device_type=device_type,
                 wait_time=3,
                 max_days_back=max_days_back,
                 max_reviews_limit=max_reviews_limit,
                 use_proxy=True,
-                max_retries=3  # 3 повторные попытки при таймауте
+                max_retries=3,  # 3 повторные попытки при таймауте
+                card_id=card_id  # Передаем ID карточки напрямую
             )
             
             if not yandex_result or not yandex_result.get('success', False):
@@ -421,7 +417,7 @@ class IntegratedParser:
             
             # Получаем информацию о результатах парсинга
             reviews_found = yandex_result.get('reviews_found', 0)
-            card_id = yandex_result.get('card_id', '')  # Извлекаем card_id из результата
+            # card_id уже передан как параметр, не извлекаем из результата
             
             result = {
                 'url': url,
@@ -579,9 +575,13 @@ class IntegratedParser:
             for i, (url, sheet_reviews) in enumerate(urls_data.items(), 1):
                 thread_print(f"🔄 Поток {worker_id}: URL {i}/{len(urls_data)}")
                 
+                # Получаем ID карточки из первого отзыва (все отзывы одного URL имеют одинаковый card_id)
+                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else None
+                
                 # Обрабатываем URL
                 url_result = self.process_url_reviews(
                     url=url,
+                    card_id=card_id,
                     sheet_reviews=sheet_reviews,
                     sheet_name=sheet_name,
                     device_type=device_type,
@@ -971,9 +971,13 @@ def main():
                     max_workers=1
                 )
                 
+                # Получаем ID карточки из первого отзыва
+                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else None
+                
                 # Обрабатываем конкретный URL
                 url_result = parser.process_url_reviews(
                     url=url,
+                    card_id=card_id,
                     sheet_reviews=sheet_reviews,
                     sheet_name=sheet_name,
                     device_type=DEVICE_TYPE,

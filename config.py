@@ -4,7 +4,7 @@
 
 # Настройки Google Sheets (список таблиц для обработки)
 SPREADSHEETS = [
-    "https://docs.google.com/spreadsheets/d/16T7Z54Z6vPhLRpo8QpQYUbbwJsNnvsMYE_Q3_C6qvaA/"
+    "https://docs.google.com/spreadsheets/d/1Yfm1vwMmI5KM_DBkZGjADpzamK8wDjMLOBltCsegmPg"
 ]
 
 CREDENTIALS_FILE = "credentials.json"

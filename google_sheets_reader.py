@@ -141,7 +141,7 @@ class GoogleSheetsReader:
     def validate_columns(self, df: pd.DataFrame, sheet_name: str):
         """Валидация наличия обязательных колонок"""
         required_columns = [
-            "Ссылка",
+            "id карточки",
             "Текст отзыва",
             "Дата публикации",
             "Статус"
@@ -177,7 +177,7 @@ class GoogleSheetsReader:
     def check_missing_columns(self, df: pd.DataFrame, sheet_name: str) -> List[str]:
         """Проверка недостающих колонок без исключения"""
         required_columns = [
-            "Ссылка",
+            "id карточки",
             "Текст отзыва", 
             "Дата публикации",
             "Статус"

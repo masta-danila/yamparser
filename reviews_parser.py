@@ -1,7 +1,7 @@
 # Импорт новых модулей
 from driver_manager import setup_driver, get_driver_creation_lock
 from page_handler import (
-    extract_card_id_from_url, get_page_info, check_for_captcha, 
+    get_page_info, check_for_captcha, 
     handle_captcha_automatically, click_sort_by_date, handle_popup_if_available,
     scroll_page, prepare_reviews_url, POPUP_HANDLER_AVAILABLE
 )
@@ -55,7 +55,7 @@ except ImportError:
 _driver_creation_lock = get_driver_creation_lock()
 
 # Функция setup_driver теперь импортируется из driver_manager
-# Функция extract_card_id_from_url теперь импортируется из page_handler
+# ID карточки теперь передается как параметр, не извлекается из URL
 
 # Функции get_page_info, check_for_captcha, handle_captcha_automatically теперь импортируются из page_handler
 
@@ -1494,7 +1494,7 @@ def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) 
         print(f"❌ Ошибка проверки checkpoint: {e}")
         return False
 
-def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None, max_retries=3):
+def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None, max_retries=3, card_id=None):
     """
     Обертка для get_reviews_page с повторными попытками при таймауте
     При ошибке создает новый браузер с новым профилем и прокси
@@ -1515,10 +1515,10 @@ def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_day
             if attempt > 0:
                 print(f"🔄 ПОВТОРНАЯ ПОПЫТКА {attempt}/{max_retries} с новым браузером и прокси...")
                 # При повторной попытке всегда создаем новый профиль (передаем None)
-                result = get_reviews_page(url, device_type, wait_time, max_days_back, max_reviews_limit, use_proxy, profile_path=None)
+                result = get_reviews_page(url, device_type, wait_time, max_days_back, max_reviews_limit, use_proxy, profile_path=None, card_id=card_id)
             else:
                 print(f"🚀 ПЕРВАЯ ПОПЫТКА загрузки страницы...")
-                result = get_reviews_page(url, device_type, wait_time, max_days_back, max_reviews_limit, use_proxy, profile_path)
+                result = get_reviews_page(url, device_type, wait_time, max_days_back, max_reviews_limit, use_proxy, profile_path, card_id)
             
             # Если успешно, возвращаем результат
             if result and result.get('success', False):
@@ -1570,7 +1570,7 @@ def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_day
         "retry_attempts": max_retries + 1
     }
 
-def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None):
+def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None, card_id=None):
     """
     Основная функция для получения отзывов с Яндекс Карт
     
@@ -1587,10 +1587,9 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         dict: результаты парсинга
     """
     
-    # Извлекаем ID карточки из URL
-    card_id = extract_card_id_from_url(url)
+    # Используем только переданный card_id
     if not card_id:
-        print("❌ Не удалось извлечь ID карточки из URL")
+        print("❌ ID карточки не передан")
         return None
     
     # Определяем стратегию парсинга на основе checkpoint
