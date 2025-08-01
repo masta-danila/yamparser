@@ -1,44 +1,20 @@
 @echo off
-echo.
-echo ========================================
-echo  YamParser - Парсер отзывов Яндекс Карт
-echo ========================================
-echo.
+REM Batch-скрипт для запуска парсера с логированием
+REM Переходим в папку проекта (замените на ваш путь!)
+cd /d "C:\Path\To\Your\Project\yamparser"
 
-cd /d "%~dp0"
+REM Создаем папку для логов если её нет
+if not exist "logs" mkdir logs
 
-REM Проверяем существование виртуального окружения
-if not exist "venv\Scripts\activate.bat" (
-    echo ❌ Виртуальное окружение не найдено!
-    echo Сначала создайте venv:
-    echo   python -m venv venv
-    echo   venv\Scripts\activate
-    echo   pip install -r requirements.txt
-    pause
-    exit /b 1
-)
-
-echo 🚀 Активация виртуального окружения...
+REM Активируем виртуальное окружение
 call venv\Scripts\activate.bat
 
-echo 📋 Проверка зависимостей...
-python -c "import selenium, psycopg2, pandas" 2>nul
-if errorlevel 1 (
-    echo ❌ Некоторые зависимости не установлены!
-    echo Установите зависимости: pip install -r requirements.txt
-    pause
-    exit /b 1
-)
-
-echo ✅ Все зависимости найдены
-
-echo.
-echo 🗺️ Запуск интегрированного парсера...
-echo.
-
+REM Запускаем парсер (логи будут писаться автоматически)
 python integrated_parser.py
 
+REM Показываем где сохранены логи
 echo.
-echo 🏁 Парсинг завершен
+echo 📁 Логи сохранены в папке logs\
+echo Имя файла: %date:~-4%-%date:~-10,2%-%date:~-7,2%.txt
 echo.
-pause 
+pause

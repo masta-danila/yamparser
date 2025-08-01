@@ -2,6 +2,7 @@
 Модуль для логирования с префиксом потока
 """
 import threading
+import logging
 
 
 def get_thread_prefix() -> str:
@@ -24,8 +25,12 @@ def get_thread_prefix() -> str:
 
 
 def thread_print(message: str, end: str = '\n'):
-    """Печать сообщения с префиксом потока"""
-    print(f"{get_thread_prefix()} {message}", end=end)
+    """Печать сообщения с префиксом потока и запись в лог"""
+    formatted_message = f"{get_thread_prefix()} {message}"
+    
+    # Логируем - это автоматически выведет в консоль И запишет в файл
+    logger = logging.getLogger('thread_logger')
+    logger.info(formatted_message)
 
 
 def thread_log(message: str):

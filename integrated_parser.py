@@ -20,6 +20,10 @@ from text_matcher import TextMatcher
 from thread_logger import thread_print
 from driver_manager import get_driver_creation_lock, initialize_profiles_cleanup, cleanup_all_profiles
 
+# Настройка логирования
+from logger_config import setup_logging
+import logging
+
 # Импорт для работы с базой данных
 try:
     from reviews_database import ReviewsDatabase
@@ -788,29 +792,33 @@ class IntegratedParser:
 def main():
     """Основная функция для запуска интегрированного парсера"""
     
-    print("🚀 Запуск интегрированного парсера Google Sheets + Яндекс.Карт")
-    print("="*60)
+    # Настройка логирования в самом начале
+    setup_logging()
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🚀 Запуск интегрированного парсера Google Sheets + Яндекс.Карт")
+    logger.info("="*60)
     
     # Инициализация с очисткой старых профилей
     initialize_profiles_cleanup()
     
     if not SPREADSHEETS:
-        print("❌ Не настроены таблицы для обработки!")
-        print("Добавьте URL таблиц в список SPREADSHEETS в настройках")
+        logger.error("❌ Не настроены таблицы для обработки!")
+        logger.error("Добавьте URL таблиц в список SPREADSHEETS в настройках")
         return
     
-    print(f"📊 Найдено таблиц для обработки: {len(SPREADSHEETS)}")
+    logger.info(f"📊 Найдено таблиц для обработки: {len(SPREADSHEETS)}")
     
     # ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов ДО парсинга
-    print(f"\n🚀 ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов во всех таблицах")
-    print("="*70)
+    logger.info(f"\n🚀 ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов во всех таблицах")
+    logger.info("="*70)
     
     from sheets_updater import SheetsUpdater
     batch_updater = SheetsUpdater(CREDENTIALS_FILE)
     
     total_rejections = 0
     for i, spreadsheet_url in enumerate(SPREADSHEETS, 1):
-        print(f"📋 Обрабатываем таблицу {i}/{len(SPREADSHEETS)}")
+        logger.info(f"📋 Обрабатываем таблицу {i}/{len(SPREADSHEETS)}")
         
         rejection_results = batch_updater.batch_reject_old_reviews(
             spreadsheet_url=spreadsheet_url,
@@ -818,13 +826,13 @@ def main():
         )
         
         total_rejections += rejection_results['success']
-        print(f"✅ Таблица {i}: отклонено {rejection_results['success']} старых отзывов")
+        logger.info(f"✅ Таблица {i}: отклонено {rejection_results['success']} старых отзывов")
     
-    print(f"\n🎯 ИТОГ ЭТАПА 1: Всего отклонено {total_rejections} старых отзывов")
-    print("="*70)
+    logger.info(f"\n🎯 ИТОГ ЭТАПА 1: Всего отклонено {total_rejections} старых отзывов")
+    logger.info("="*70)
     
     # ЭТАП 2: Сбор URL для парсинга (после отклонения старых)
-    print(f"\n📋 ЭТАП 2: Сбор URL для парсинга...")
+    logger.info(f"\n📋 ЭТАП 2: Сбор URL для парсинга...")
     
     # Собираем ВСЕ URL из ВСЕХ листов ВСЕХ таблиц
     all_urls = []  # Список кортежей (spreadsheet_url, sheet_name, url, sheet_reviews)
