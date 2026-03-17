@@ -57,6 +57,42 @@ def find_not_now_button(driver):
     
     found_buttons = []
     
+    # 0. ПРИОРИТЕТ: Крестик закрытия баннера "Установить Яндекс Карты"
+    #    Только внутри Y-A-* с текстом попапа! Крестик карточки — в другом контейнере.
+    thread_print("🔍 Приоритетный поиск: крестик баннера «Установить Яндекс Карты»...")
+    try:
+        banner_close_xpaths = [
+            "//*[starts-with(@id, 'Y-A-') and contains(., 'Установить Яндекс Карты')]//*[@aria-label='Закрыть']",
+            "//*[starts-with(@id, 'Y-A-') and contains(., 'Выбирайте нужные места')]//*[@aria-label='Закрыть']",
+            "//span[@aria-label='Закрыть'][.//svg[@viewBox='0 0 14 14']]",  # Попап 36x36 (fallback)
+        ]
+        for xpath in banner_close_xpaths:
+            buttons = driver.find_elements(By.XPATH, xpath)
+            for btn in buttons:
+                if btn.is_displayed() and btn.is_enabled():
+                    # Исключаем крестик карточки (SVG 24x24)
+                    try:
+                        svg = btn.find_element(By.TAG_NAME, "svg")
+                        w, h = svg.get_attribute("width"), svg.get_attribute("height")
+                        if w == "24" or h == "24":
+                            continue  # Это крестик карточки — пропускаем
+                    except:
+                        pass
+                    if not any(b["element"] == btn for b in found_buttons):
+                        found_buttons.append({
+                            "element": btn,
+                            "method": f"Баннер Яндекс.Карт: {xpath[:50]}...",
+                            "text": "Закрыть (крестик попапа)",
+                            "tag": btn.tag_name,
+                            "classes": btn.get_attribute("class") or ""
+                        })
+                        print(f"   ✅ Найден крестик баннера Яндекс.Карт ({btn.tag_name})")
+                    break
+            if found_buttons:
+                break
+    except Exception as e:
+        print(f"   ⚠️ Ошибка поиска крестика баннера: {e}")
+    
     # 1. ПРИОРИТЕТНЫЙ ПОИСК ПО ID (самый надежный)
     thread_print("🔍 Приоритетный поиск по ID...")
     try:
@@ -160,21 +196,31 @@ def find_not_now_button(driver):
         print(f"   ⚠️ Ошибка поиска Яндекс.Карт: {e}")
     
     # 2.2. ПОИСК КНОПКИ ЗАКРЫТИЯ ПО ARIA-LABEL="Закрыть"
-    print("🔍 Поиск кнопки закрытия по aria-label...")
+    #      Только внутри баннера попапа (Y-A-* с текстом "Установить")! Крестик карточки — вне баннера.
+    print("🔍 Поиск кнопки закрытия по aria-label (только в баннере попапа)...")
     try:
-        close_buttons = driver.find_elements(By.XPATH, "//*[@aria-label='Закрыть']")
+        # Ищем только внутри Y-A-* с текстом попапа — не трогаем крестик карточки
+        close_in_popup_xpath = "//*[starts-with(@id, 'Y-A-') and contains(., 'Установить Яндекс Карты')]//*[@aria-label='Закрыть']"
+        close_buttons = driver.find_elements(By.XPATH, close_in_popup_xpath)
         for button in close_buttons:
             if button.is_displayed() and button.is_enabled():
+                # Доп. проверка: исключаем SVG 24x24 (крестик карточки)
+                try:
+                    svg = button.find_element(By.TAG_NAME, "svg")
+                    if svg.get_attribute("width") == "24" or svg.get_attribute("height") == "24":
+                        continue
+                except:
+                    pass
                 if not any(b["element"] == button for b in found_buttons):
                     classes = button.get_attribute("class") or ""
                     found_buttons.append({
                         "element": button,
-                        "method": "Aria-label: 'Закрыть'",
+                        "method": "Aria-label в баннере попапа",
                         "text": "Закрыть (крестик)",
                         "tag": button.tag_name,
                         "classes": classes
                     })
-                    print(f"   ✅ Найдена кнопка закрытия: (крестик) ({button.tag_name}) classes='{classes[:20]}...'")
+                    print(f"   ✅ Найдена кнопка закрытия в баннере: (крестик) ({button.tag_name})")
     except Exception as e:
         print(f"   ⚠️ Ошибка поиска кнопки закрытия: {e}")
     
@@ -230,11 +276,10 @@ def find_not_now_button(driver):
             "div[class*='gdpr-popup-v3-button']",
             "#gdpr-popup-v3-button-all",
             "[class*='gdpr-popup-v3-button_id_all']",
-            # НОВЫЕ СЕЛЕКТОРЫ ДЛЯ БАННЕРА ЯНДЕКС.КАРТ:
+            # НОВЫЕ СЕЛЕКТОРЫ ДЛЯ БАННЕРА ЯНДЕКС.КАРТ (только "Не сейчас", крестик — через XPath с проверкой текста):
             "a.p1dba9a6a",  # Кнопка "Не сейчас" в баннере приложения
             "[id^='Y-A-'] a",  # Любые ссылки внутри баннера с ID Y-A-*
-            "[id^='Y-A-'] [aria-label='Закрыть']",  # Кнопка закрытия в баннере
-            "span[aria-label='Закрыть']",  # Кнопка-крестик
+            # НЕ добавляем span[aria-label='Закрыть'] — найдёт крестик карточки (24x24)!
             # Cookie-специфичные селекторы
             "button[class*='cookie']",
             "div[class*='cookie']",
@@ -264,6 +309,14 @@ def find_not_now_button(driver):
             buttons = driver.find_elements(By.CSS_SELECTOR, selector)
             for button in buttons:
                 if button.is_displayed() and button.is_enabled():
+                    # Пропускаем крестик карточки (24x24)
+                    if (button.get_attribute("aria-label") or "").strip() == "Закрыть":
+                        try:
+                            svg = button.find_element(By.TAG_NAME, "svg")
+                            if svg.get_attribute("width") == "24" or svg.get_attribute("height") == "24":
+                                continue
+                        except:
+                            pass
                     if not any(b["element"] == button for b in found_buttons):
                         found_buttons.append({
                             "element": button,
@@ -320,21 +373,28 @@ def click_button_simple(driver, button_info):
     """
     element = button_info["element"]
     
-    # Метод 1: Обычный клик
+    # Прокручиваем к элементу (для span и overlay-кнопок)
     try:
-        element.click()
-        print(f"   ✅ Обычный клик успешен")
-        return True
-    except Exception as e:
-        print(f"   ❌ Обычный клик не сработал: {str(e)[:50]}")
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+        time.sleep(0.2)
+    except:
+        pass
     
-    # Метод 2: JavaScript клик (самый надежный)
+    # Метод 1: JavaScript клик (надёжнее для span и overlay)
     try:
         driver.execute_script("arguments[0].click();", element)
         print(f"   ✅ JavaScript клик успешен")
         return True
     except Exception as e:
         print(f"   ❌ JavaScript клик не сработал: {str(e)[:50]}")
+    
+    # Метод 2: Обычный клик
+    try:
+        element.click()
+        print(f"   ✅ Обычный клик успешен")
+        return True
+    except Exception as e:
+        print(f"   ❌ Обычный клик не сработал: {str(e)[:50]}")
     
     print(f"   ❌ Все методы клика не сработали")
     return False
@@ -357,10 +417,29 @@ def detect_app_popup_simple(driver):
         # НОВЫЕ ИНДИКАТОРЫ ДЛЯ ЯНДЕКС.КАРТ:
         "В приложении Яндекс Карт",
         "Ищите адреса и выбирайте места",
-        "даже без интернета"
+        "даже без интернета",
+        "Выбирайте нужные места в приложении",
+        "Установить Яндекс Карты"
     ]
     
-    # 1. Поиск по тексту индикаторов
+    # 1. Поиск баннера "Установить Яндекс Карты" по ID — только если содержит текст попапа!
+    #    Карточка организации тоже может иметь Y-A-*, но без этого текста — не кликать её крестик!
+    try:
+        banners = driver.find_elements(By.CSS_SELECTOR, "[id^='Y-A-']")
+        popup_texts = ("Установить Яндекс Карты", "Выбирайте нужные места в приложении")
+        for banner in banners:
+            if banner.is_displayed():
+                try:
+                    banner_text = banner.text or ""
+                    if any(t in banner_text for t in popup_texts):
+                        print(f"🎯 Найден баннер «Установить Яндекс Карты»: ID={banner.get_attribute('id')}")
+                        return True
+                except:
+                    pass
+    except:
+        pass
+    
+    # 2. Поиск по тексту индикаторов
     for indicator in popup_indicators:
         try:
             xpath = f"//*[contains(text(), '{indicator}')]"
@@ -370,16 +449,6 @@ def detect_app_popup_simple(driver):
                 return True
         except:
             continue
-    
-    # 2. Поиск баннера Яндекс.Карт по ID
-    try:
-        banners = driver.find_elements(By.CSS_SELECTOR, "[id^='Y-A-']")
-        for banner in banners:
-            if banner.is_displayed():
-                print(f"🎯 Найден баннер Яндекс.Карт: ID={banner.get_attribute('id')}")
-                return True
-    except:
-        pass
     
     return False
 

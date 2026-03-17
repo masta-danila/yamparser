@@ -21,7 +21,7 @@ from thread_logger import thread_print
 from driver_manager import get_driver_creation_lock, initialize_profiles_cleanup, cleanup_all_profiles
 
 # Настройка логирования
-from logger_config import setup_logging
+from logger_config import setup_logging 
 import logging
 
 # Импорт для работы с базой данных
