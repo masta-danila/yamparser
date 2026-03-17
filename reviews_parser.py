@@ -1723,6 +1723,12 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         # Применяем сортировку
         sort_applied = click_sort_by_date(driver)
         
+        if not sort_applied:
+            raise RuntimeError(
+                "Сортировка 'По новизне' не применена — опция не найдена в выпадающем меню. "
+                "Требуется повторная попытка с новым браузером/прокси."
+            )
+        
         # БЕЗОПАСНОСТЬ: Пауза после сортировки
         if sort_applied:
             human_pause = random.uniform(1.0, 2.0)

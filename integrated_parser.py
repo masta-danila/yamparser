@@ -196,16 +196,19 @@ class IntegratedParser:
         
         return date_str
     
-    def get_sheet_data(self, sheet_name: str, max_days_back: int = 30) -> Dict[str, Any]:
+    def get_sheet_data(self, sheet_name: str, max_days_back: int = 30, recheck_days: int = 30) -> Dict[str, Any]:
         """
         Получает данные листа и группирует их по URL
         
-        Обрабатываются только отзывы со статусом "Модерация" и датой публикации не позднее max_days_back.
+        Обрабатываются:
+        - Отзывы со статусом "Модерация" и датой публикации не позднее max_days_back.
+        - Отзывы со статусом "Размещен" и датой публикации не позднее recheck_days (для проверки удаления).
         Старые отзывы со статусом "Модерация" автоматически отклоняются (статус -> "Отклонен").
         
         Args:
             sheet_name: Название листа
-            max_days_back: Максимальное количество дней назад для фильтрации по дате публикации
+            max_days_back: Максимальное количество дней назад для отзывов "Модерация"
+            recheck_days: Максимальное количество дней для повторной проверки отзывов "Размещен"
             
         Returns:
             Словарь с данными листа
@@ -226,9 +229,10 @@ class IntegratedParser:
             if not has_publication_date_column:
                 thread_print(f"⚠️ Колонка 'Дата публикации' не найдена в листе '{sheet_name}', фильтрация по дате отключена")
             
-            # Вычисляем пороговую дату
+            # Вычисляем пороговые даты
             from datetime import datetime, timedelta
             cutoff_date = datetime.now() - timedelta(days=max_days_back)
+            recheck_cutoff_date = datetime.now() - timedelta(days=recheck_days)
             
             # Группируем данные по URL
             urls_data = defaultdict(list)
@@ -257,8 +261,8 @@ class IntegratedParser:
                 # Формируем URL из ID карточки (название не важно - Яндекс сделает редирект)
                 url = f"https://yandex.ru/maps/org/{card_id}/reviews/"
                 
-                # Берем в работу только отзывы со статусом "Модерация"
-                if status != "Модерация":
+                # Берем в работу отзывы "Модерация" или "Размещен" (для повторной проверки)
+                if status not in ("Модерация", "Размещен"):
                     filtered_by_status += 1
                     continue
                 
@@ -301,33 +305,31 @@ class IntegratedParser:
                             filtered_by_empty_date += 1
                             continue
                         
-                        # Проверяем, что дата публикации не старше max_days_back
-                        if publication_date_parsed < cutoff_date:
-                            # Если отзыв старый и имеет статус "Модерация", автоматически отклоняем его
-                            if status == "Модерация":
+                        # Проверяем дату в зависимости от статуса
+                        if status == "Модерация":
+                            if publication_date_parsed < cutoff_date:
                                 thread_print(f"📅 Автоматическое отклонение старого отзыва: строка {index + 2}, дата {publication_date_str}")
-                                
-                                # Обновляем статус на "Отклонен" в Google Sheets (дату НЕ меняем)
                                 try:
                                     success = self.sheets_updater.update_review_status(
                                         spreadsheet_url=self.spreadsheet_url,
                                         sheet_name=sheet_name,
                                         row_number=index + 2,
                                         new_status='Отклонен',
-                                        publication_date=None  # Дату НЕ обновляем
+                                        publication_date=None
                                     )
-                                    
                                     if success:
                                         thread_print(f"✅ Старый отзыв отклонен: строка {index + 2} -> 'Отклонен'")
                                         auto_rejected_count += 1
                                     else:
                                         thread_print(f"❌ Не удалось отклонить старый отзыв в строке {index + 2}")
-                                        
                                 except Exception as update_error:
                                     thread_print(f"❌ Ошибка отклонения старого отзыва в строке {index + 2}: {update_error}")
-                            
-                            filtered_by_date += 1
-                            continue
+                                filtered_by_date += 1
+                                continue
+                        elif status == "Размещен":
+                            if publication_date_parsed < recheck_cutoff_date:
+                                filtered_by_date += 1
+                                continue
                             
                     except Exception as e:
                         thread_print(f"❌ Ошибка обработки даты публикации '{publication_date}' в строке {index + 2}: {e}")
@@ -350,7 +352,7 @@ class IntegratedParser:
             thread_print(f"📊 Статистика фильтрации листа '{sheet_name}':")
             thread_print(f"   📝 Всего строк: {total_rows}")
             thread_print(f"   ❌ Отфильтровано пустых (без id карточки или текста): {filtered_by_empty}")
-            thread_print(f"   ❌ Отфильтровано по статусу (не 'Модерация'): {filtered_by_status}")
+            thread_print(f"   ❌ Отфильтровано по статусу (не 'Модерация' и не 'Размещен'): {filtered_by_status}")
             
             if has_publication_date_column:
                 thread_print(f"   ❌ Отфильтровано без даты публикации: {filtered_by_empty_date}")
@@ -495,38 +497,49 @@ class IntegratedParser:
                 thread_print(f"   📝 Текст из таблицы: {match['sheet_review']['text'][:100]}...")
                 thread_print(f"   🌐 Текст с карточки: {match['parsed_review']['text'][:100]}...")
             
-            # Обновляем статусы в Google Sheets для найденных совпадений
+            # Обновляем статусы в Google Sheets
             updates = []
+            matched_sheet_reviews = {m['sheet_review']['row'] for m in matches}
+            
             if matches:
                 thread_print(f"📝 Обновляем статусы в Google Sheets для {len(matches)} совпадений...")
-                
                 try:
                     for match in matches:
                         sheet_review = match['sheet_review']
                         parsed_review = match['parsed_review']
-                        
-                        # Получаем дату публикации из отзыва с карточки
-                        publication_date = self._format_date_for_sheets(parsed_review.get('date', ''))
-                        
-                        # Статус будет обновлен в ЭТАПЕ 3 (батчевое размещение)
-                        thread_print(f"📝 Совпадение добавлено для батчевого размещения: строка {sheet_review['row']}")
-                        
-                        # Подготавливаем данные для совместимости
-                        update_data = {
-                            'spreadsheet_url': self.spreadsheet_url,
-                            'sheet_name': sheet_name,
-                            'row': sheet_review['row'],
-                            'status': 'Размещен',
-                            'date': publication_date,
-                            'similarity_percent': match['similarity_percent']
-                        }
-                        updates.append(update_data)
-                        
+                        # Только для "Модерация" -> "Размещен" (для "Размещен" совпадение = отзыв на месте, ничего не меняем)
+                        if sheet_review.get('status') == 'Модерация':
+                            publication_date = self._format_date_for_sheets(parsed_review.get('date', ''))
+                            thread_print(f"📝 Совпадение добавлено для батчевого размещения: строка {sheet_review['row']}")
+                            update_data = {
+                                'spreadsheet_url': self.spreadsheet_url,
+                                'sheet_name': sheet_name,
+                                'row': sheet_review['row'],
+                                'status': 'Размещен',
+                                'date': publication_date,
+                                'similarity_percent': match['similarity_percent']
+                            }
+                            updates.append(update_data)
                 except Exception as e:
                     thread_print(f"❌ Ошибка при обновлении Google Sheets: {e}")
                     result['sheets_update_error'] = str(e)
-            else:
-                thread_print("ℹ️ Нет совпадений для обновления статусов")
+            
+            # Для "Размещен": если отзыв НЕ найден на карточке -> статус "Удален"
+            for sheet_review in sheet_reviews:
+                if sheet_review.get('status') == 'Размещен' and sheet_review['row'] not in matched_sheet_reviews:
+                    thread_print(f"🗑️ Отзыв удалён с карточки: строка {sheet_review['row']} -> 'Удален'")
+                    update_data = {
+                        'spreadsheet_url': self.spreadsheet_url,
+                        'sheet_name': sheet_name,
+                        'row': sheet_review['row'],
+                        'status': 'Удален',
+                        'date': None,
+                        'similarity_percent': 0
+                    }
+                    updates.append(update_data)
+            
+            if not updates:
+                thread_print("ℹ️ Нет обновлений статусов")
             
             result['updates'] = updates
             
@@ -540,7 +553,8 @@ class IntegratedParser:
     
     def process_sheet_worker(self, sheet_name: str, worker_id: int, 
                            device_type: str = "mobile", max_days_back: int = 30,
-                           max_reviews_limit: int = 100, delay_between_urls: int = 3):
+                           max_reviews_limit: int = 100, delay_between_urls: int = 3,
+                           recheck_days: int = 30):
         """
         Обрабатывает лист в отдельном потоке
         
@@ -556,7 +570,7 @@ class IntegratedParser:
         
         try:
             # Получаем данные листа
-            sheet_data = self.get_sheet_data(sheet_name, max_days_back)
+            sheet_data = self.get_sheet_data(sheet_name, max_days_back, recheck_days)
             
             if sheet_data['error']:
                 self.results['errors'].append({
@@ -582,6 +596,10 @@ class IntegratedParser:
                 # Получаем ID карточки из первого отзыва (все отзывы одного URL имеют одинаковый card_id)
                 card_id = sheet_reviews[0]['card_id'] if sheet_reviews else None
                 
+                # Для отзывов «Размещен» парсим глубже (recheck_days), иначе — max_days_back
+                has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
+                effective_max_days = max(max_days_back, recheck_days) if has_placed else max_days_back
+                
                 # Обрабатываем URL
                 url_result = self.process_url_reviews(
                     url=url,
@@ -589,7 +607,7 @@ class IntegratedParser:
                     sheet_reviews=sheet_reviews,
                     sheet_name=sheet_name,
                     device_type=device_type,
-                    max_days_back=max_days_back,
+                    max_days_back=effective_max_days,
                     max_reviews_limit=max_reviews_limit
                 )
                 
@@ -598,7 +616,7 @@ class IntegratedParser:
                 
                 if url_result['matches']:
                     self.results['total_matches'] += len(url_result['matches'])
-                    all_updates.extend(url_result['updates'])
+                all_updates.extend(url_result['updates'])
                 
                 if url_result['error']:
                     self.results['errors'].append({
@@ -632,7 +650,7 @@ class IntegratedParser:
     
     def run(self, device_type: str = "mobile", max_days_back: int = 30,
             max_reviews_limit: int = 100, delay_between_workers: int = 2,
-            delay_between_urls: int = 3) -> Dict[str, Any]:
+            delay_between_urls: int = 3, recheck_days: int = 30) -> Dict[str, Any]:
         """
         Запускает интегрированный парсинг
         
@@ -716,7 +734,8 @@ class IntegratedParser:
                             device_type=device_type,
                             max_days_back=max_days_back,
                             max_reviews_limit=max_reviews_limit,
-                            delay_between_urls=delay_between_urls
+                            delay_between_urls=delay_between_urls,
+                            recheck_days=recheck_days
                         )
                     except Exception as e:
                         thread_print(f"🧵 Поток {worker_id}: Ошибка обработки листа {sheet_name}: {e}")
@@ -871,7 +890,7 @@ def main():
                     )
                     
                     # Получаем данные листа
-                    sheet_data = temp_parser.get_sheet_data(sheet_name, MAX_DAYS_BACK)
+                    sheet_data = temp_parser.get_sheet_data(sheet_name, MAX_DAYS_BACK, RECHECK_DAYS)
                     
                     if sheet_data['error']:
                         print(f"   ⚠️ Ошибка в листе {sheet_name}: {sheet_data['error']}")
@@ -982,6 +1001,10 @@ def main():
                 # Получаем ID карточки из первого отзыва
                 card_id = sheet_reviews[0]['card_id'] if sheet_reviews else None
                 
+                # Для отзывов «Размещен» парсим глубже (RECHECK_DAYS), иначе — MAX_DAYS_BACK
+                has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
+                effective_max_days = max(MAX_DAYS_BACK, RECHECK_DAYS) if has_placed else MAX_DAYS_BACK
+                
                 # Обрабатываем конкретный URL
                 url_result = parser.process_url_reviews(
                     url=url,
@@ -989,7 +1012,7 @@ def main():
                     sheet_reviews=sheet_reviews,
                     sheet_name=sheet_name,
                     device_type=DEVICE_TYPE,
-                    max_days_back=MAX_DAYS_BACK,
+                    max_days_back=effective_max_days,
                     max_reviews_limit=MAX_REVIEWS_LIMIT
                 )
                 
@@ -998,17 +1021,18 @@ def main():
                 
                 if url_result['matches']:
                     local_results['total_matches'] += len(url_result['matches'])
-                    local_results['total_updates'] += len(url_result['updates'])
-                    
-                    # Накапливаем данные для батчевого размещения
-                    for update in url_result.get('updates', []):
-                        placement_data = {
-                            'spreadsheet_url': spreadsheet_url,
-                            'sheet_name': sheet_name,
-                            'row': update.get('row'),
-                            'date': update.get('date')
-                        }
-                        local_results['placement_updates'].append(placement_data)
+                local_results['total_updates'] += len(url_result.get('updates', []))
+                
+                # Накапливаем обновления (Размещен + Удален)
+                for update in url_result.get('updates', []):
+                    placement_data = {
+                        'spreadsheet_url': spreadsheet_url,
+                        'sheet_name': sheet_name,
+                        'row': update.get('row'),
+                        'status': update.get('status', 'Размещен'),
+                        'date': update.get('date')
+                    }
+                    local_results['placement_updates'].append(placement_data)
                 
                 if url_result['error']:
                     local_results['errors'].append({
@@ -1088,14 +1112,14 @@ def main():
     print(f"⏱️ Общее время: {total_results['total_time']:.1f} секунд")
     print(f"👥 Использовано потоков: {actual_workers}")
     
-    # ЭТАП 3: БАТЧЕВОЕ РАЗМЕЩЕНИЕ найденных совпадений ПОСЛЕ парсинга
+    # ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов (Размещен + Удален) ПОСЛЕ парсинга
     if total_results['placement_updates']:
-        print(f"\n🚀 ЭТАП 3: БАТЧЕВОЕ РАЗМЕЩЕНИЕ найденных совпадений")
+        print(f"\n🚀 ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов ({len(total_results['placement_updates'])} записей)")
         print("="*70)
         
-        placement_results = batch_updater.batch_update_to_placed(total_results['placement_updates'])
+        placement_results = batch_updater.batch_update_reviews(total_results['placement_updates'])
         
-        print(f"🎯 ИТОГ ЭТАПА 3: Размещено {placement_results['success']} найденных совпадений")
+        print(f"🎯 ИТОГ ЭТАПА 3: Обновлено {placement_results['success']} записей")
         if placement_results['failed'] > 0:
             print(f"❌ Ошибок размещения: {placement_results['failed']}")
         print("="*70)
@@ -1136,7 +1160,7 @@ from config import (
     SPREADSHEETS, CREDENTIALS_FILE, WRITE_TO_DATABASE, 
     DEVICE_TYPE, WAIT_TIME, MAX_DAYS_BACK, MAX_REVIEWS_LIMIT, 
     USE_PROXY, SIMILARITY_THRESHOLD, MAX_WORKERS, 
-    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS
+    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS, RECHECK_DAYS
 )
 
 # ============================================================================
