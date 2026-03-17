@@ -24,13 +24,6 @@ from driver_manager import get_driver_creation_lock, initialize_profiles_cleanup
 from logger_config import setup_logging 
 import logging
 
-# Импорт для работы с базой данных
-try:
-    from reviews_database import ReviewsDatabase
-    DATABASE_AVAILABLE = True
-except ImportError:
-    DATABASE_AVAILABLE = False
-
 # ============================================================
 # ФУНКЦИИ МОНИТОРИНГА РЕСУРСОВ
 # ============================================================
@@ -438,48 +431,11 @@ class IntegratedParser:
             
             thread_print(f"✅ Спаршено отзывов: {reviews_found}")
             
-            # Определяем новые отзывы (которые только что были сохранены в БД)
-            db_results = yandex_result.get('database_result', {})
-            new_reviews_count = db_results.get('saved', 0)
-            
-            thread_print(f"📊 Результаты БД: сохранено={new_reviews_count}, дубликатов={db_results.get('duplicates', 0)}")
-            
-            # Получаем отзывы для проверки совпадений
-            if WRITE_TO_DATABASE:
-                # Получаем отзывы из базы данных
-                from reviews_database import ReviewsDatabase
-                
-                if new_reviews_count > 0:
-                    # Получаем последние N отзывов из БД (которые только что сохранились)
-                    try:
-                        with ReviewsDatabase() as db:
-                            latest_reviews = db.get_latest_reviews(card_id, new_reviews_count)
-                            result['new_reviews'] = latest_reviews
-                            result['parsed_reviews'] = latest_reviews
-                            thread_print(f"🆕 Новых отзывов для проверки: {len(latest_reviews)}")
-                    except Exception as e:
-                        thread_print(f"❌ Ошибка получения отзывов из БД: {e}")
-                        result['new_reviews'] = []
-                        result['parsed_reviews'] = []
-                else:
-                    thread_print("ℹ️ Новых отзывов не найдено - все отзывы уже были в БД")
-                    # Получаем все отзывы этой карточки для проверки совпадений
-                    try:
-                        with ReviewsDatabase() as db:
-                            all_reviews = db.get_reviews_by_card_id(card_id)
-                            result['new_reviews'] = all_reviews
-                            result['parsed_reviews'] = all_reviews
-                            thread_print(f"🔄 Проверяем все {len(all_reviews)} отзывов на совпадения")
-                    except Exception as e:
-                        thread_print(f"❌ Ошибка получения отзывов из БД: {e}")
-                        result['new_reviews'] = []
-                        result['parsed_reviews'] = []
-            else:
-                # Используем отзывы напрямую из результата парсинга (БД отключена)
-                parsed_reviews = yandex_result.get('reviews', [])
-                result['new_reviews'] = parsed_reviews
-                result['parsed_reviews'] = parsed_reviews
-                thread_print(f"📝 Используем отзывы из парсинга (БД отключена): {len(parsed_reviews)}")
+            # Используем отзывы напрямую из результата парсинга
+            parsed_reviews = yandex_result.get('reviews', [])
+            result['new_reviews'] = parsed_reviews
+            result['parsed_reviews'] = parsed_reviews
+            thread_print(f"📝 Отзывов для проверки совпадений: {len(parsed_reviews)}")
             
             # Ищем совпадения только среди новых отзывов
             matches = self.text_matcher.find_matches_in_reviews(
@@ -1157,7 +1113,7 @@ def main():
 
 # Импортируем все настройки из config.py
 from config import (
-    SPREADSHEETS, CREDENTIALS_FILE, WRITE_TO_DATABASE, 
+    SPREADSHEETS, CREDENTIALS_FILE, 
     DEVICE_TYPE, WAIT_TIME, MAX_DAYS_BACK, MAX_REVIEWS_LIMIT, 
     USE_PROXY, SIMILARITY_THRESHOLD, MAX_WORKERS, 
     DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS, RECHECK_DAYS

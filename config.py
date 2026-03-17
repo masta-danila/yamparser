@@ -9,30 +9,19 @@ SPREADSHEETS = [
 
 CREDENTIALS_FILE = "credentials.json"
 
-# Настройки базы данных PostgreSQL
-DATABASE_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'reviews',
-    'user': 'daniladzhiev',
-    'password': '021682'  # ЗАМЕНИТЕ НА ВАШ ПАРОЛЬ!
-}
-
-# Настройки базы данных
-WRITE_TO_DATABASE = False                # Записывать ли данные в БД (если False - только фильтрация по MAX_DAYS_BACK без чекпоинта)
-
 # Настройки парсинга
 DEVICE_TYPE = "mobile"                  # Тип устройства: "mobile" или "desktop"
 WAIT_TIME = 3                           # Время ожидания в секундах
 MAX_DAYS_BACK = 30                      # Максимальное количество дней назад для первичного парсинга
 MAX_REVIEWS_LIMIT = 1000                 # Максимальное количество отзывов для парсинга
 USE_PROXY = True                        # Использовать ли прокси
-HEADLESS_MODE = False                   # Скрывать браузеры (True) или показывать (False)
+HEADLESS_MODE = True                    # Скрывать браузеры (True) или показывать (False)
 
 # Настройки Google Sheets
 SIMILARITY_THRESHOLD = 0.85             # Порог совпадения текстов (85%)
+RECHECK_DAYS = 500                       # Дней для повторной проверки отзывов «Размещен» (если нет на карточке -> «Удален»)
 
 # Настройки потоков
-MAX_WORKERS = 20                         # Максимальное количество потоков
+MAX_WORKERS = 2                         # Максимальное количество потоков
 DELAY_BETWEEN_WORKERS = 2               # Задержка между запуском потоков (секунды)
 DELAY_BETWEEN_URLS = 1                  # Пауза между URL-ами в одном потоке (секунды) 

@@ -7,19 +7,6 @@ import os
 from datetime import datetime
 from thread_logger import thread_print
 
-# Импорт функций работы с базой данных
-try:
-    from reviews_database import save_reviews_to_db, get_existing_reviews_count
-    DATABASE_AVAILABLE = True
-except ImportError:
-    DATABASE_AVAILABLE = False
-
-# Импорт настроек из config
-try:
-    from config import WRITE_TO_DATABASE
-except ImportError:
-    WRITE_TO_DATABASE = True  # По умолчанию записываем в БД
-
 def create_checkpoint_data(url, card_id, reviews, page_info, stats):
     """Создание данных для checkpoint"""
     checkpoint_data = {
@@ -59,61 +46,15 @@ def load_checkpoint(checkpoint_file):
         print(f"❌ Ошибка загрузки checkpoint: {e}")
         return None
 
-def save_reviews_to_database(reviews, card_id, url):
-    """Сохранение отзывов в базу данных"""
-    if not DATABASE_AVAILABLE:
-        print("❌ Модуль базы данных недоступен")
-        return False, 0, 0
-    
-    if not WRITE_TO_DATABASE:
-        print("⚠️ Запись в БД отключена (WRITE_TO_DATABASE=False)")
-        return True, 0, 0
-    
-    if not reviews:
-        print("⚠️ Нет отзывов для сохранения")
-        return True, 0, 0
-    
-    try:
-        # Получаем количество существующих отзывов
-        existing_count = get_existing_reviews_count(card_id)
-        print(f"📊 Существующих отзывов в БД: {existing_count}")
-        
-        # Сохраняем отзывы
-        saved_count = save_reviews_to_db(reviews, card_id, url)
-        
-        if saved_count > 0:
-            print(f"✅ Сохранено новых отзывов в БД: {saved_count}")
-            return True, saved_count, existing_count
-        else:
-            print("⚠️ Новых отзывов для сохранения не найдено")
-            return True, 0, existing_count
-            
-    except Exception as e:
-        print(f"❌ Ошибка сохранения в базу данных: {e}")
-        return False, 0, 0
-
 def process_and_save_results(reviews, card_id, url, checkpoint_file=None, page_info=None):
-    """Обработка и сохранение результатов парсинга"""
+    """Обработка результатов парсинга (БД не используется)"""
     results = {
         'success': False,
         'reviews_count': len(reviews),
-        'saved_to_db': False,
-        'db_saved_count': 0,
-        'db_existing_count': 0,
         'checkpoint_saved': False
     }
     
     try:
-        # Сохранение в базу данных
-        if DATABASE_AVAILABLE and WRITE_TO_DATABASE:
-            db_success, saved_count, existing_count = save_reviews_to_database(reviews, card_id, url)
-            results['saved_to_db'] = db_success
-            results['db_saved_count'] = saved_count
-            results['db_existing_count'] = existing_count
-        elif not WRITE_TO_DATABASE:
-            print("⚠️ Пропускаем сохранение в БД (WRITE_TO_DATABASE=False)")
-            results['saved_to_db'] = True  # Считаем успешным, просто не сохраняем
-        
         # Создание статистики
         stats = {
             'total_reviews': len(reviews),
@@ -155,10 +96,6 @@ def process_and_save_results(reviews, card_id, url, checkpoint_file=None, page_i
             print(f"📊 Средний рейтинг: {stats['average_rating']:.1f}")
         if stats['date_range']:
             print(f"📅 Диапазон дат: {stats['date_range']['earliest']} - {stats['date_range']['latest']}")
-        
-        if DATABASE_AVAILABLE:
-            print(f"💾 Сохранено в БД новых: {results['db_saved_count']}")
-            print(f"📊 Было в БД ранее: {results['db_existing_count']}")
         
         if checkpoint_file:
             print(f"📂 Checkpoint: {'✅ Сохранен' if results['checkpoint_saved'] else '❌ Ошибка'}")

@@ -10,16 +10,9 @@ from review_extractor import (
     is_review_too_old, load_more_reviews
 )
 from data_processor import (
-    process_and_save_results, filter_reviews_by_date, limit_reviews_count,
-    clean_review_data, load_checkpoint, save_checkpoint, save_reviews_to_database
+    filter_reviews_by_date, limit_reviews_count, clean_review_data
 )
 from thread_logger import thread_print
-
-# Импорт настроек из config
-try:
-    from config import WRITE_TO_DATABASE
-except ImportError:
-    WRITE_TO_DATABASE = True  # По умолчанию записываем в БД
 
 # Стандартные импорты
 from selenium.webdriver.common.by import By
@@ -32,15 +25,6 @@ from datetime import datetime, timedelta
 import random
 import threading
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-
-# Импорт модуля работы с базой данных
-try:
-    from reviews_database import ReviewsDatabase
-    DATABASE_AVAILABLE = True
-    print("✅ Модуль базы данных подключен")
-except ImportError:
-    DATABASE_AVAILABLE = False
-    print("⚠️ Модуль reviews_database.py не найден - отзывы не будут сохраняться в БД")
 
 # Импорт менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)
 try:
@@ -1320,85 +1304,8 @@ def parse_rating(rating_str: str) -> float:
         return None
 
 def save_reviews_to_database(reviews_data: list, card_id: str) -> dict:
-    """Сохранить отзывы в базу данных с проверкой уникальности"""
-    if not DATABASE_AVAILABLE:
-        print("⚠️ База данных недоступна - пропускаем сохранение")
-        return {"saved": 0, "duplicates": 0, "errors": 0}
-    
-    if not WRITE_TO_DATABASE:
-        print("⚠️ Запись в БД отключена (WRITE_TO_DATABASE=False) - пропускаем сохранение")
-        return {"saved": 0, "duplicates": 0, "errors": 0}
-    
-    if not reviews_data or not card_id:
-        print("⚠️ Нет данных для сохранения")
-        return {"saved": 0, "duplicates": 0, "errors": 0}
-    
-    print(f"\n💾 Сохраняем {len(reviews_data)} отзывов в базу данных...")
-    
-    results = {"saved": 0, "duplicates": 0, "errors": 0}
-    
-    try:
-        with ReviewsDatabase() as db:
-            for i, review in enumerate(reviews_data, 1):
-                try:
-                    # Подготавливаем данные для БД
-                    author_name = review.get('author', 'Неизвестный автор')
-                    review_text = review.get('text', '')
-                    review_date = parse_review_date(review.get('date', ''))
-                    rating = parse_rating(review.get('rating', ''))
-                    
-                    # ДОПОЛНИТЕЛЬНАЯ проверка: пропускаем отзыв если не удалось распарсить дату
-                    if not review_date:
-                        print(f"⚠️ Отзыв #{i} пропущен - не удалось распарсить дату: '{review.get('date', '')}'")
-                        results["errors"] += 1
-                        continue
-                    
-                    # Проверяем уникальность по алгоритму: card_id + date + author + rating
-                    duplicate = db.check_duplicate_review(
-                        card_id=card_id,
-                        author_name=author_name,
-                        review_date=review_date,
-                        review_text=review_text,  # Используем текст для дополнительной проверки
-                        rating=rating  # Основной критерий уникальности
-                    )
-                    
-                    if duplicate:
-                        print(f"⚠️ Отзыв #{i} уже существует (автор: {author_name}, дата: {review_date})")
-                        results["duplicates"] += 1
-                        continue
-                    
-                    # Добавляем новый отзыв
-                    review_id = db.add_review(
-                        card_id=card_id,
-                        author_name=author_name,
-                        review_text=review_text,
-                        review_date=review_date,
-                        rating=rating,
-                        status='found'
-                    )
-                    
-                    if review_id:
-                        print(f"✅ Отзыв #{i} сохранен (ID: {review_id}, автор: {author_name})")
-                        results["saved"] += 1
-                    else:
-                        results["errors"] += 1
-                        
-                except Exception as e:
-                    print(f"❌ Ошибка сохранения отзыва #{i}: {e}")
-                    results["errors"] += 1
-                    continue
-            
-            print(f"\n📊 Результаты сохранения:")
-            print(f"   ✅ Сохранено новых: {results['saved']}")
-            print(f"   ⚠️ Дубликатов пропущено: {results['duplicates']}")
-            print(f"   ❌ Ошибок: {results['errors']}")
-            
-            return results
-            
-    except Exception as e:
-        print(f"❌ Критическая ошибка при работе с БД: {e}")
-        results["errors"] = len(reviews_data)
-        return results
+    """Заглушка: БД не используется, отзывы передаются напрямую в integrated_parser"""
+    return {"saved": 0, "duplicates": 0, "errors": 0}
 
 def print_reviews(reviews_data):
     """Вывод отзывов в консоль"""
@@ -1429,47 +1336,13 @@ def print_reviews(reviews_data):
             print()
 
 def get_checkpoint_info(card_id: str) -> dict:
-    """Получить информацию о checkpoint для карточки"""
-    if not DATABASE_AVAILABLE or not WRITE_TO_DATABASE:
-        return {"has_checkpoint": False, "last_date": None, "total_reviews": 0}
-    
-    try:
-        with ReviewsDatabase() as db:
-            # Получаем последний отзыв
-            latest_review = db.get_latest_review_by_card(card_id)
-            
-            if latest_review:
-                # Получаем общее количество отзывов
-                stats = db.get_statistics(card_id)
-                total_reviews = stats.get('total_reviews', 0)
-                
-                print(f"📍 CHECKPOINT найден:")
-                print(f"   📅 Последний отзыв: {latest_review['review_date']}")
-                print(f"   👤 Автор: {latest_review['author_name']}")
-                print(f"   📊 Всего отзывов в БД: {total_reviews}")
-                
-                return {
-                    "has_checkpoint": True,
-                    "last_date": latest_review['review_date'],
-                    "last_author": latest_review['author_name'],
-                    "last_rating": latest_review.get('rating'),
-                    "total_reviews": total_reviews
-                }
-            else:
-                print(f"📍 CHECKPOINT не найден - первичный парсинг")
-                return {"has_checkpoint": False, "last_date": None, "total_reviews": 0}
-                
-    except Exception as e:
-        print(f"❌ Ошибка получения checkpoint: {e}")
-        return {"has_checkpoint": False, "last_date": None, "total_reviews": 0}
+    """Получить информацию о checkpoint для карточки (БД не используется — всегда первичный парсинг)"""
+    return {"has_checkpoint": False, "last_date": None, "total_reviews": 0}
 
 def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) -> bool:
     """Определить, нужно ли остановить парсинг (дошли до checkpoint)"""
     if not checkpoint_info.get("has_checkpoint"):
         return False  # Нет checkpoint - продолжаем
-    
-    if not DATABASE_AVAILABLE or not WRITE_TO_DATABASE:
-        return False
     
     try:
         # Проверяем точное совпадение с последним известным отзывом
@@ -1592,18 +1465,10 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         print("❌ ID карточки не передан")
         return None
     
-    # Определяем стратегию парсинга на основе checkpoint
+    # Определяем стратегию парсинга (БД не используется — всегда первичный парсинг)
     checkpoint_info = get_checkpoint_info(card_id)
-    
-    if checkpoint_info['has_checkpoint'] and WRITE_TO_DATABASE:
-        print("🔄 ИНКРЕМЕНТАЛЬНЫЙ парсинг до checkpoint")
-        parsing_strategy = "incremental"
-    else:
-        if not WRITE_TO_DATABASE:
-            print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней (запись в БД отключена)".format(max_days_back))
-        else:
-            print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней".format(max_days_back))
-        parsing_strategy = "initial"
+    print("🆕 ПЕРВИЧНЫЙ парсинг за последние {} дней".format(max_days_back))
+    parsing_strategy = "primary"
     
     # Инициализация менеджера прокси (РАБОЧИЙ МЕТОД SELENIUMWIRE)
     proxy_manager = None
@@ -1884,17 +1749,6 @@ def main():
     
     if result["success"]:
         print(f"\n🎉 Задача выполнена успешно!")
-        
-        # Отображаем результаты сохранения в БД
-        if result.get("database_result"):
-            db_results = result["database_result"]
-            if db_results["saved"] > 0 or db_results["duplicates"] > 0:
-                print(f"\n💾 Результаты сохранения в БД:")
-                print(f"   🆔 ID карточки: {result.get('card_id', 'N/A')}")
-                print(f"   ✅ Новых отзывов сохранено: {db_results['saved']}")
-                print(f"   ⚠️ Дубликатов пропущено: {db_results['duplicates']}")
-                if db_results['errors'] > 0:
-                    print(f"   ❌ Ошибок при сохранении: {db_results['errors']}")
         
         if result.get("captcha_detected", False):
             print("💡 Для решения CAPTCHA используйте selenium_captcha_solver.py")
