@@ -63,7 +63,7 @@ def setup_logging():
     our_modules = [
         'integrated_parser', 'reviews_parser', 'google_sheets_reader', 
         'sheets_updater', 'text_matcher', 'thread_logger', 'logger_config',
-        'driver_manager', 'data_processor'
+        'driver_manager', 'data_processor', 'platforms'
     ]
     
     for module_name in our_modules:

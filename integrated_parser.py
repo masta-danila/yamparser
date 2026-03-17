@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
 # Импорт основных модулей
-from reviews_parser import get_reviews_page_with_retry
+from platforms import get_handler_for_url
 from google_sheets_reader import GoogleSheetsReader
 from sheets_updater import SheetsUpdater
 from text_matcher import TextMatcher
@@ -385,23 +385,37 @@ class IntegratedParser:
         thread_print(f"🌐 Обработка URL: {url}")
         
         try:
-            # URL уже готов в нужном формате с /reviews/
-            # Получаем отзывы с Яндекс.Карт (с повторными попытками при таймауте)
-            yandex_result = get_reviews_page_with_retry(
+            # Определяем платформу по URL и получаем обработчик
+            handler = get_handler_for_url(url)
+            if not handler:
+                return {
+                    'url': url,
+                    'sheet_name': sheet_name,
+                    'parsing_success': False,
+                    'parsed_reviews': [],
+                    'new_reviews': [],
+                    'matches': [],
+                    'updates': [],
+                    'error': f"Платформа не поддерживается для URL: {url}"
+                }
+            
+            thread_print(f"📌 Платформа: {handler.name}")
+            
+            # Получаем отзывы через обработчик платформы
+            platform_result = handler.get_reviews(
                 url=url,
+                card_id=card_id,
                 device_type=device_type,
-                wait_time=3,
                 max_days_back=max_days_back,
                 max_reviews_limit=max_reviews_limit,
                 use_proxy=True,
-                max_retries=3,  # 3 повторные попытки при таймауте
-                card_id=card_id  # Передаем ID карточки напрямую
+                max_retries=3,
             )
             
-            if not yandex_result or not yandex_result.get('success', False):
+            if not platform_result or not platform_result.get('success', False):
                 error_msg = f"Ошибка парсинга URL {url}"
-                if yandex_result and yandex_result.get('error'):
-                    error_msg += f": {yandex_result['error']}"
+                if platform_result and platform_result.get('error'):
+                    error_msg += f": {platform_result['error']}"
                 
                 return {
                     'url': url,
@@ -415,14 +429,13 @@ class IntegratedParser:
                 }
             
             # Получаем информацию о результатах парсинга
-            reviews_found = yandex_result.get('reviews_found', 0)
-            # card_id уже передан как параметр, не извлекаем из результата
+            reviews_found = platform_result.get('reviews_found', 0)
             
             result = {
                 'url': url,
                 'sheet_name': sheet_name,
                 'parsing_success': True,
-                'parsed_reviews': yandex_result.get('reviews', []),
+                'parsed_reviews': platform_result.get('reviews', []),
                 'new_reviews': [],
                 'matches': [],
                 'updates': [],
@@ -432,7 +445,7 @@ class IntegratedParser:
             thread_print(f"✅ Спаршено отзывов: {reviews_found}")
             
             # Используем отзывы напрямую из результата парсинга
-            parsed_reviews = yandex_result.get('reviews', [])
+            parsed_reviews = platform_result.get('reviews', [])
             result['new_reviews'] = parsed_reviews
             result['parsed_reviews'] = parsed_reviews
             thread_print(f"📝 Отзывов для проверки совпадений: {len(parsed_reviews)}")
