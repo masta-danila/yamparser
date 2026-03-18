@@ -40,6 +40,7 @@ class BasePlatformHandler(ABC):
         max_reviews_limit: int = 100,
         use_proxy: bool = True,
         max_retries: int = 3,
+        target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Парсит отзывы со страницы.

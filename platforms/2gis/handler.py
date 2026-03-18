@@ -33,6 +33,7 @@ class TwoGisHandler(BasePlatformHandler):
         max_reviews_limit: int = 100,
         use_proxy: bool = True,
         max_retries: int = 3,
+        target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Открывает URL 2GIS, закрывает попапы, кликает «Отзывы» и извлекает отзывы.
@@ -135,6 +136,7 @@ class TwoGisHandler(BasePlatformHandler):
                     max_days_back=max_days_back,
                     max_reviews_limit=max_reviews_limit,
                     scroll_to_load=True,
+                    target_date=target_date,
                 )
 
                 if driver:

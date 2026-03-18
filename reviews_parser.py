@@ -827,12 +827,15 @@ def scroll_page(driver):
     try:
         print("🔽 Начинаем плавную прокрутку...")
         
-        # Ищем скроллируемый контейнер (найден в диагностике)
+        # Ищем скроллируемый контейнер (Яндекс + 2GIS + универсальные)
         scroll_container = None
         container_selectors = [
             ".scroll__container",
             ".business-reviews-view",
-            ".business-reviews-card-view"
+            ".business-reviews-card-view",
+            "[class*='scroll']",
+            "main",
+            "[role='main']",
         ]
         
         for selector in container_selectors:
@@ -859,9 +862,9 @@ def scroll_page(driver):
             
             print(f"📏 Текущий скролл контейнера: {current_scroll}, максимальный: {max_scroll}")
             
-            # Плавная прокрутка по частям
+            # Плавная прокрутка по частям до конца
             scroll_step = 300  # Прокручиваем по 300px за раз
-            target_scroll = min(current_scroll + 1500, max_scroll)  # Прокручиваем на ~1500px или до конца
+            target_scroll = max_scroll  # До самого низа
             
             while current_scroll < target_scroll:
                 next_scroll = min(current_scroll + scroll_step, target_scroll)
@@ -895,9 +898,9 @@ def scroll_page(driver):
             
             print(f"📏 Текущая позиция: {current_position}, высота страницы: {page_height}")
             
-            # Плавная прокрутка по частям
+            # Плавная прокрутка по частям до конца страницы
             scroll_step = 300  # Прокручиваем по 300px за раз
-            target_position = min(current_position + 1500, page_height - window_height)
+            target_position = max(0, page_height - window_height)
             
             while current_position < target_position:
                 next_position = min(current_position + scroll_step, target_position)

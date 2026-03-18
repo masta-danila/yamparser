@@ -165,6 +165,104 @@ def _scroll_container(driver, scroll_target, step=500):
         pass
 
 
+def _get_oldest_visible_date(driver):
+    """
+    Быстро получает дату последнего (самого старого) видимого отзыва.
+    Возвращает datetime или None. Отзывы идут сверху вниз (новые первые).
+    """
+    try:
+        containers = driver.find_elements(By.CSS_SELECTOR, REVIEW_CONTAINER)
+        if not containers:
+            containers = driver.find_elements(By.XPATH, "//div[.//div[contains(@class,'_49x36f')]]")
+        if not containers:
+            return None
+        for c in reversed(containers):
+            try:
+                date_el = c.find_element(By.CSS_SELECTOR, DATE_SELECTOR)
+                raw = (date_el.text or "").strip()
+                if not raw:
+                    continue
+                parsed = parse_review_date(raw)
+                if parsed:
+                    return datetime.strptime(parsed, "%Y-%m-%d")
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _scroll_2gis_one_batch(driver, scroll_target=None):
+    """
+    Один цикл прокрутки 2GIS: кнопка «Загрузить ещё», скролл контейнера, window.
+    Возвращает True если нажата кнопка «Загрузить ещё».
+    """
+    from selenium.webdriver.common.keys import Keys
+
+    clicked = False
+    try:
+        load_more = driver.find_element(By.CSS_SELECTOR, "button._kuel4no")
+        if load_more.is_displayed():
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", load_more)
+            time.sleep(0.3)
+            driver.execute_script("arguments[0].click();", load_more)
+            clicked = True
+            time.sleep(1.5)
+    except Exception:
+        pass
+
+    scroll_target = scroll_target or _find_scroll_target(driver)
+    _scroll_container(driver, scroll_target, step=600)
+
+    try:
+        containers = driver.find_elements(By.CSS_SELECTOR, REVIEW_CONTAINER)
+        if not containers:
+            containers = driver.find_elements(By.XPATH, "//div[.//div[contains(@class,'_49x36f')]]")
+        if containers:
+            last_review = containers[-1]
+            driver.execute_script("arguments[0].scrollIntoView({block: 'end', behavior: 'auto'});", last_review)
+            time.sleep(0.8)
+            if scroll_target:
+                driver.execute_script("""
+                    var el = arguments[0], last = arguments[1];
+                    var rect = last.getBoundingClientRect();
+                    var elRect = el.getBoundingClientRect();
+                    var offset = rect.top - elRect.top + el.scrollTop;
+                    el.scrollTop = Math.min(offset + 200, el.scrollHeight - el.clientHeight);
+                """, scroll_target, last_review)
+                time.sleep(0.5)
+    except Exception:
+        pass
+
+    driver.execute_script("window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));")
+    driver.execute_script("window.scrollBy(0, 800);")
+    time.sleep(0.4)
+
+    if scroll_target:
+        try:
+            from selenium.webdriver.common.action_chains import ActionChains
+            from selenium.webdriver.common.actions.wheel_input import ScrollOrigin
+            origin = ScrollOrigin.from_element(scroll_target)
+            ActionChains(driver).scroll_from_origin(origin, 0, 600).perform()
+            time.sleep(0.4)
+        except Exception:
+            try:
+                ActionChains(driver).move_to_element(scroll_target).scroll_by_amount(0, 600).perform()
+                time.sleep(0.4)
+            except Exception:
+                pass
+
+    try:
+        body = driver.find_element(By.TAG_NAME, "body")
+        body.send_keys(Keys.PAGE_DOWN)
+        body.send_keys(Keys.END)
+        time.sleep(0.4)
+    except Exception:
+        pass
+
+    return clicked
+
+
 def _scroll_to_load_more(driver, max_attempts=25):
     """
     Прокрутка для подгрузки отзывов 2GIS.
@@ -275,12 +373,64 @@ def _scroll_to_load_more(driver, max_attempts=25):
     time.sleep(1)
 
 
-def extract_reviews(driver, max_days_back=30, max_reviews_limit=100, scroll_to_load=True):
-    thread_print("Извлечение отзывов 2GIS (макс. %s, за %s дней)..." % (max_reviews_limit, max_days_back))
+def _max_scroll_attempts_from_target_date(target_date_str):
+    """
+    Ограничивает прокрутку по целевой дате искомого отзыва.
+    """
+    if not target_date_str:
+        return 25
+    try:
+        target = datetime.strptime(target_date_str, "%Y-%m-%d")
+        days_ago = (datetime.now() - target).days
+        if days_ago <= 7:
+            return 5
+        if days_ago <= 14:
+            return 8
+        if days_ago <= 30:
+            return 12
+        if days_ago <= 90:
+            return 18
+    except (ValueError, TypeError):
+        pass
+    return 25
 
-    if scroll_to_load:
+
+def extract_reviews(driver, max_days_back=30, max_reviews_limit=100, scroll_to_load=True, target_date=None):
+    max_attempts = _max_scroll_attempts_from_target_date(target_date)
+    thread_print("Извлечение отзывов 2GIS (макс. %s, за %s дней, прокрутка до %s)..." % (max_reviews_limit, max_days_back, max_attempts))
+
+    target_dt = None
+    if target_date:
+        try:
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            pass
+
+    if scroll_to_load and target_dt:
+        scroll_target = _find_scroll_target(driver)
+        if scroll_target:
+            thread_print("Прокрутка 2GIS: найден scrollable-контейнер")
+        else:
+            thread_print("Прокрутка 2GIS: scrollable-контейнер не найден, скролл только window")
+        scroll_count = 0
+        while scroll_count < max_attempts:
+            oldest = _get_oldest_visible_date(driver)
+            if oldest is not None and oldest <= target_dt:
+                if scroll_count == 0:
+                    thread_print("Прокрутка 2GIS: целевой отзыв уже на экране, прокрутка не нужна")
+                else:
+                    thread_print("Прокрутка 2GIS: целевая дата %s достигнута (последний отзыв %s), остановка" % (target_date, oldest.strftime("%Y-%m-%d")))
+                break
+            clicked = _scroll_2gis_one_batch(driver, scroll_target)
+            scroll_count += 1
+            if clicked:
+                thread_print("Прокрутка 2GIS: загружена порция (%s)" % scroll_count)
+            time.sleep(0.5)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
+    elif scroll_to_load:
         thread_print("Прокрутка для подгрузки отзывов...")
-        _scroll_to_load_more(driver)
+        _scroll_to_load_more(driver, max_attempts=max_attempts)
         time.sleep(1)
 
     cutoff_date = datetime.now() - timedelta(days=max_days_back)

@@ -27,6 +27,11 @@ class TextMatcher:
         # Приводим к нижнему регистру
         text = text.lower()
         
+        # Унификация дефисов и кавычек (частая причина расхождений таблица/карточка)
+        text = text.replace('\u2013', '-').replace('\u2014', '-')  # en-dash, em-dash -> hyphen
+        text = text.replace('\u2018', "'").replace('\u2019', "'")  # smart quotes
+        text = text.replace('\u201c', '"').replace('\u201d', '"')
+        
         # Убираем лишние пробелы и переносы строк
         text = re.sub(r'\s+', ' ', text)
         
@@ -79,9 +84,24 @@ class TextMatcher:
         similarity = self.calculate_similarity(text1, text2)
         return similarity >= self.similarity_threshold
     
+    def _find_best_similarity(self, target_text: str, candidate_texts: List[str]) -> Optional[Tuple[str, float, int]]:
+        """Находит лучшее совпадение без учёта порога. Для отладки."""
+        if not target_text or not candidate_texts:
+            return None
+        best_text = None
+        best_similarity = 0.0
+        best_index = -1
+        for i, candidate_text in enumerate(candidate_texts):
+            similarity = self.calculate_similarity(target_text, candidate_text)
+            if similarity > best_similarity:
+                best_text = candidate_text
+                best_similarity = similarity
+                best_index = i
+        return (best_text, best_similarity, best_index) if best_text else None
+
     def find_best_match(self, target_text: str, candidate_texts: List[str]) -> Optional[Tuple[str, float, int]]:
         """
-        Находит лучшее совпадение среди списка текстов
+        Находит лучшее совпадение среди списка текстов (только выше порога).
         
         Args:
             target_text: Целевой текст для поиска
@@ -90,22 +110,12 @@ class TextMatcher:
         Returns:
             Кортеж (лучший_текст, процент_совпадения, индекс) или None если совпадений нет
         """
-        if not target_text or not candidate_texts:
-            return None
-        
-        best_match = None
-        best_similarity = 0.0
-        best_index = -1
-        
-        for i, candidate_text in enumerate(candidate_texts):
-            similarity = self.calculate_similarity(target_text, candidate_text)
-            
-            if similarity >= self.similarity_threshold and similarity > best_similarity:
-                best_match = candidate_text
-                best_similarity = similarity
-                best_index = i
-        
-        return (best_match, best_similarity, best_index) if best_match else None
+        result = self._find_best_similarity(target_text, candidate_texts)
+        if result:
+            best_text, similarity, index = result
+            if similarity >= self.similarity_threshold:
+                return result
+        return None
     
     def find_matches_in_reviews(self, sheet_reviews: List[dict], parsed_reviews: List[dict]) -> List[dict]:
         """
@@ -134,7 +144,8 @@ class TextMatcher:
             
             # Ищем лучшее совпадение
             match_result = self.find_best_match(sheet_text, parsed_texts)
-            
+            best_any = self._find_best_similarity(sheet_text, parsed_texts)
+
             if match_result:
                 best_text, similarity, index = match_result
                 parsed_review = parsed_reviews[index]
@@ -152,6 +163,12 @@ class TextMatcher:
                 thread_print(f"   📄 Лист: строка {sheet_review.get('row', '?')}")
                 thread_print(f"   📝 Текст из таблицы: {sheet_text[:100]}...")
                 thread_print(f"   🌐 Текст с карточки: {best_text[:100]}...")
+            elif best_any:
+                best_text, sim, idx = best_any
+                pct = round(sim * 100, 1)
+                thread_print(f"⚠️ Совпадение не найдено (порог {self.similarity_threshold * 100}%): строка {sheet_review.get('row', '?')}, лучшее {pct}% (отзыв #{idx + 1})")
+                thread_print(f"   📝 Таблица: {sheet_text[:80]}...")
+                thread_print(f"   🌐 Карточка: {best_text[:80]}...")
         
         return matches
     

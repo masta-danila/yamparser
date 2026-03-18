@@ -188,6 +188,30 @@ class IntegratedParser:
             pass
         
         return date_str
+
+    def _get_target_date_from_sheet_reviews(self, sheet_reviews: List[Dict]) -> Optional[str]:
+        """
+        Извлекает целевую дату искомого отзыва (самую старую среди sheet_reviews).
+        Формат возврата: 'YYYY-MM-DD' для передачи в handler.
+        """
+        from datetime import datetime
+        dates = []
+        for r in sheet_reviews or []:
+            pd = r.get('publication_date')
+            if not pd or str(pd).strip() in ('', 'nan', 'none', 'null'):
+                continue
+            s = str(pd).strip()
+            for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y'):
+                try:
+                    dt = datetime.strptime(s, fmt)
+                    dates.append(dt)
+                    break
+                except ValueError:
+                    pass
+        if not dates:
+            return None
+        oldest = min(dates)
+        return oldest.strftime('%Y-%m-%d')
     
     def get_sheet_data(self, sheet_name: str, max_days_back: int = 30, recheck_days: int = 30) -> Dict[str, Any]:
         """
@@ -404,6 +428,11 @@ class IntegratedParser:
                 }
             
             thread_print(f"📌 Платформа: {handler.name}")
+
+            # Целевая дата искомого отзыва — ограничиваем прокрутку
+            target_date = self._get_target_date_from_sheet_reviews(sheet_reviews)
+            if target_date:
+                thread_print(f"📅 Целевая дата искомого отзыва: {target_date} (прокрутка ограничена)")
             
             # Получаем отзывы через обработчик платформы
             platform_result = handler.get_reviews(
@@ -414,6 +443,7 @@ class IntegratedParser:
                 max_reviews_limit=max_reviews_limit,
                 use_proxy=True,
                 max_retries=3,
+                target_date=target_date,
             )
             
             if not platform_result or not platform_result.get('success', False):

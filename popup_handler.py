@@ -796,6 +796,128 @@ def close_2gis_app_popup(driver):
         return False
 
 
+def close_google_maps_app_popup(driver):
+    """
+    Закрывает попап Google Maps «Удобнее пользоваться в приложении» —
+    клик по кнопке «Вернуться в браузер».
+    """
+    try:
+        selectors = [
+            (By.XPATH, "//button[.//span[contains(text(), 'Вернуться в браузер')]]"),
+            (By.XPATH, "//*[contains(text(), 'Вернуться в браузер')]"),
+            (By.CSS_SELECTOR, "button.vfi8qf.l6mLne"),
+            (By.XPATH, "//div[contains(@class, 'zc8u2b')]//button[contains(@jsaction, 'dismiss_action')]"),
+        ]
+        for by, selector in selectors:
+            try:
+                elements = driver.find_elements(by, selector)
+                for el in elements:
+                    if el.is_displayed() and el.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                        time.sleep(0.2)
+                        driver.execute_script("arguments[0].click();", el)
+                        thread_print("✅ Попап Google Maps закрыт (Вернуться в браузер)")
+                        time.sleep(1)
+                        return True
+            except Exception:
+                pass
+        return False
+    except Exception as e:
+        thread_print(f"⚠️ Ошибка закрытия попапа Google Maps: {e}")
+        return False
+
+
+def close_zoon_age_popup(driver):
+    """
+    Закрывает попап Zoon «Подтверждение возраста» —
+    клик по кнопке «Мне исполнилось 18 лет».
+    """
+    try:
+        selectors = [
+            (By.XPATH, "//button[contains(text(), 'Мне исполнилось 18 лет')]"),
+            (By.XPATH, "//*[contains(text(), 'Мне исполнилось 18 лет')]"),
+            (By.CSS_SELECTOR, "button.z-button--primary"),
+            (By.CSS_SELECTOR, "div.z-modal-footer button.z-button--primary"),
+        ]
+        for by, selector in selectors:
+            try:
+                elements = driver.find_elements(by, selector)
+                for el in elements:
+                    if el.is_displayed() and el.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                        time.sleep(0.2)
+                        driver.execute_script("arguments[0].click();", el)
+                        thread_print("✅ Попап Zoon закрыт (Мне исполнилось 18 лет)")
+                        time.sleep(1)
+                        return True
+            except Exception:
+                pass
+        return False
+    except Exception as e:
+        thread_print(f"⚠️ Ошибка закрытия попапа Zoon: {e}")
+        return False
+
+
+def close_zoon_cookie_popup(driver):
+    """
+    Закрывает попап Zoon «Мы используем файлы cookies» —
+    клик по кнопке закрытия в div.cookie-consent.
+    """
+    try:
+        selectors = [
+            (By.CSS_SELECTOR, "div.cookie-consent button"),
+            (By.CSS_SELECTOR, "[data-uitest='cookie-consent'] button"),
+            (By.XPATH, "//div[contains(@class, 'cookie-consent')]//button"),
+        ]
+        for by, selector in selectors:
+            try:
+                elements = driver.find_elements(by, selector)
+                for el in elements:
+                    if el.is_displayed() and el.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                        time.sleep(0.2)
+                        driver.execute_script("arguments[0].click();", el)
+                        thread_print("✅ Попап cookies Zoon закрыт")
+                        time.sleep(1)
+                        return True
+            except Exception:
+                pass
+        return False
+    except Exception as e:
+        thread_print(f"⚠️ Ошибка закрытия попапа cookies Zoon: {e}")
+        return False
+
+
+def click_zoon_reviews_tab(driver):
+    """
+    Кликает на вкладку «Отзывы» в Zoon — переход к списку отзывов.
+    """
+    try:
+        selectors = [
+            (By.CSS_SELECTOR, "a[data-id='reviews'][data-type='reviews']"),
+            (By.XPATH, "//a[contains(@class, 'js-nav-item') and contains(@data-id, 'reviews')]"),
+            (By.XPATH, "//a[contains(@href, '/reviews/') and contains(text(), 'Отзывы')]"),
+            (By.XPATH, "//a[contains(., 'Отзывы') and contains(@href, 'reviews')]"),
+        ]
+        for by, selector in selectors:
+            try:
+                elements = driver.find_elements(by, selector)
+                for el in elements:
+                    if el.is_displayed() and el.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                        time.sleep(0.3)
+                        driver.execute_script("arguments[0].click();", el)
+                        thread_print("✅ Вкладка «Отзывы» Zoon открыта")
+                        time.sleep(2)
+                        return True
+            except Exception:
+                pass
+        return False
+    except Exception as e:
+        thread_print(f"⚠️ Ошибка клика по вкладке Отзывы Zoon: {e}")
+        return False
+
+
 # Экспорт основных функций
 __all__ = [
     'handle_popup_simple',
@@ -804,4 +926,8 @@ __all__ = [
     'click_button_simple',
     'close_2gis_app_popup',
     'close_2gis_cookie_popup',
+    'close_google_maps_app_popup',
+    'close_zoon_age_popup',
+    'close_zoon_cookie_popup',
+    'click_zoon_reviews_tab',
 ] 
