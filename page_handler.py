@@ -63,6 +63,15 @@ def prepare_reviews_url(url: str) -> str:
         
         thread_print(f"🔧 URL нормализован: {url} → {normalized_url}")
         return normalized_url
+
+    # Яндекс.Профиль: yandex.ru/profile/ID → конвертируем в maps/org/ID/reviews/
+    profile_pattern = r'https?://(?:yandex\.ru|yandex\.com)/profile/(\d+)'
+    profile_match = re.search(profile_pattern, url, re.IGNORECASE)
+    if profile_match:
+        org_id = profile_match.group(1)
+        normalized_url = f"https://yandex.ru/maps/org/{org_id}/reviews/"
+        thread_print(f"🔧 URL профиля конвертирован в Карты: {url} → {normalized_url}")
+        return normalized_url
     
     thread_print(f"⚠️ URL не соответствует формату Яндекс.Карт: {url}")
     return url

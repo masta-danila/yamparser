@@ -13,14 +13,19 @@ class YandexMapsHandler(BasePlatformHandler):
 
     @staticmethod
     def can_handle(url: str) -> bool:
-        """Проверяет, является ли URL страницей отзывов Яндекс.Карт."""
+        """Проверяет, является ли URL страницей отзывов Яндекс (Карты или Профиль)."""
         if not url:
             return False
         url_lower = url.lower().strip()
-        return (
-            'yandex.ru/maps' in url_lower or
-            'yandex.com/maps' in url_lower
-        ) and ('/reviews' in url_lower or '/org/' in url_lower)
+        # Яндекс.Карты: yandex.ru/maps/org/... или .../reviews/
+        if ('yandex.ru/maps' in url_lower or 'yandex.com/maps' in url_lower) and (
+            '/reviews' in url_lower or '/org/' in url_lower
+        ):
+            return True
+        # Яндекс.Профиль организации: yandex.ru/profile/ID
+        if 'yandex.ru/profile' in url_lower or 'yandex.com/profile' in url_lower:
+            return True
+        return False
 
     @property
     def name(self) -> str:

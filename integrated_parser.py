@@ -241,18 +241,21 @@ class IntegratedParser:
             
             for index, row in df.iterrows():
                 total_rows += 1
-                card_id = row.get('id карточки', '').strip()
                 review_text = row.get('Текст отзыва', '').strip()
                 status = row.get('Статус', '').strip()
                 publication_date = row.get('Дата публикации', '') if has_publication_date_column else None
-                
-                # Пропускаем строки без id карточки или с пустым текстом отзыва
-                if not card_id or not review_text:
+                # Берём URL только из колонки "Ссылка" или "URL"
+                sheet_url = (row.get('Ссылка', '') or row.get('URL', '') or '').strip()
+
+                # Пропускаем строки без URL или без текста отзыва
+                if not review_text:
                     filtered_by_empty += 1
                     continue
-                
-                # Формируем URL из ID карточки (название не важно - Яндекс сделает редирект)
-                url = f"https://yandex.ru/maps/org/{card_id}/reviews/"
+                if not sheet_url or not (sheet_url.startswith('http://') or sheet_url.startswith('https://')):
+                    filtered_by_empty += 1
+                    continue
+
+                url = sheet_url
                 
                 # Берем в работу отзывы "Модерация" или "Размещен" (для повторной проверки)
                 if status not in ("Модерация", "Размещен"):
@@ -334,7 +337,7 @@ class IntegratedParser:
                     'status': status,
                     'row': index + 2,  # +2 потому что индекс 0-based, а строки 1-based + заголовок
                     'url': url,
-                    'card_id': card_id,  # Сохраняем ID карточки
+                    'card_id': url,  # URL используется как идентификатор (для совместимости с handlers)
                     'publication_date': publication_date if has_publication_date_column else None
                 }
                 
@@ -344,7 +347,7 @@ class IntegratedParser:
             # Выводим статистику фильтрации
             thread_print(f"📊 Статистика фильтрации листа '{sheet_name}':")
             thread_print(f"   📝 Всего строк: {total_rows}")
-            thread_print(f"   ❌ Отфильтровано пустых (без id карточки или текста): {filtered_by_empty}")
+            thread_print(f"   ❌ Отфильтровано пустых (без URL или текста): {filtered_by_empty}")
             thread_print(f"   ❌ Отфильтровано по статусу (не 'Модерация' и не 'Размещен'): {filtered_by_status}")
             
             if has_publication_date_column:
@@ -368,17 +371,18 @@ class IntegratedParser:
                           device_type: str = "mobile", max_days_back: int = 30,
                           max_reviews_limit: int = 100) -> Dict[str, Any]:
         """
-        Обрабатывает отзывы для конкретного URL
-        
+        Обрабатывает отзывы для конкретного URL.
+        Платформа определяется по URL через get_handler_for_url().
+
         Args:
-            url: URL для парсинга
-            card_id: ID карточки (уже известен из таблицы)
+            url: URL для парсинга (из колонки Ссылка/URL)
+            card_id: URL для совместимости с handlers (используется как идентификатор)
             sheet_reviews: Список отзывов из таблицы
             sheet_name: Имя листа
             device_type: Тип устройства
             max_days_back: Максимальное количество дней назад
             max_reviews_limit: Максимальное количество отзывов
-            
+
         Returns:
             Словарь с результатами обработки
         """
@@ -562,8 +566,8 @@ class IntegratedParser:
             for i, (url, sheet_reviews) in enumerate(urls_data.items(), 1):
                 thread_print(f"🔄 Поток {worker_id}: URL {i}/{len(urls_data)}")
                 
-                # Получаем ID карточки из первого отзыва (все отзывы одного URL имеют одинаковый card_id)
-                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else None
+                # URL используется как идентификатор (card_id = url)
+                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else url
                 
                 # Для отзывов «Размещен» парсим глубже (recheck_days), иначе — max_days_back
                 has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
@@ -967,8 +971,8 @@ def main():
                     max_workers=1
                 )
                 
-                # Получаем ID карточки из первого отзыва
-                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else None
+                # URL используется как идентификатор (card_id = url)
+                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else url
                 
                 # Для отзывов «Размещен» парсим глубже (RECHECK_DAYS), иначе — MAX_DAYS_BACK
                 has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)

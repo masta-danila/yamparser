@@ -139,19 +139,25 @@ class GoogleSheetsReader:
             return pd.DataFrame()
     
     def validate_columns(self, df: pd.DataFrame, sheet_name: str):
-        """Валидация наличия обязательных колонок"""
+        """Валидация наличия обязательных колонок. URL берётся из колонки Ссылка или URL."""
         required_columns = [
-            "id карточки",
             "Текст отзыва",
             "Дата публикации",
             "Статус"
         ]
-        
+        url_columns = ["Ссылка", "URL"]
+
         # Получаем текущие колонки в листе
         current_columns = list(df.columns)
-        
-        # Проверяем наличие всех обязательных колонок
-        missing_columns = []
+
+        # Проверяем наличие хотя бы одной колонки с URL
+        has_url_column = any(col in current_columns for col in url_columns)
+        if not has_url_column:
+            missing_columns = ["Ссылка или URL"]
+        else:
+            missing_columns = []
+
+        # Проверяем наличие остальных обязательных колонок
         for required_col in required_columns:
             if required_col not in current_columns:
                 missing_columns.append(required_col)
@@ -165,8 +171,9 @@ class GoogleSheetsReader:
             for i, col in enumerate(current_columns, 1):
                 error_msg += f"   {i}. '{col}'\n"
             
-            error_msg += f"\n💡 Необходимые колонки ({len(required_columns)}):\n"
-            for i, col in enumerate(required_columns, 1):
+            needed = required_columns + ["Ссылка или URL (хотя бы одна)"]
+            error_msg += f"\n💡 Необходимые колонки:\n"
+            for i, col in enumerate(needed, 1):
                 error_msg += f"   {i}. '{col}'\n"
             
             print(error_msg)
@@ -175,21 +182,24 @@ class GoogleSheetsReader:
             print(f"✅ Все обязательные колонки найдены в листе '{sheet_name}'")
     
     def check_missing_columns(self, df: pd.DataFrame, sheet_name: str) -> List[str]:
-        """Проверка недостающих колонок без исключения"""
+        """Проверка недостающих колонок без исключения. URL — из Ссылка или URL."""
         required_columns = [
-            "id карточки",
-            "Текст отзыва", 
+            "Текст отзыва",
             "Дата публикации",
             "Статус"
         ]
-        
+        url_columns = ["Ссылка", "URL"]
+
         current_columns = list(df.columns)
         missing_columns = []
-        
+
+        if not any(col in current_columns for col in url_columns):
+            missing_columns.append("Ссылка или URL")
+
         for required_col in required_columns:
             if required_col not in current_columns:
                 missing_columns.append(required_col)
-        
+
         return missing_columns
     
     def check_review_data(self, df: pd.DataFrame, sheet_name: str):
@@ -262,7 +272,7 @@ class GoogleSheetsReader:
                         continue
                 else:
                     # Все колонки на месте
-                    print(f"✅ Структура листа '{sheet_name}' корректна - все 4 обязательные колонки найдены")
+                    print(f"✅ Структура листа '{sheet_name}' корректна - все обязательные колонки найдены")
                     
                     # Проверяем данные в листе
                     self.check_review_data(df, sheet_name)

@@ -740,10 +740,68 @@ def handle_popup_simple(driver, verbose=False):
             print("❌ Не удалось закрыть всплывающие окна")
         return False
 
+def close_2gis_cookie_popup(driver):
+    """
+    Закрывает попап 2GIS «Мы используем cookies» — клик по крестику.
+    """
+    try:
+        selectors = [
+            (By.CSS_SELECTOR, "div._abwj39 div._13xlah4"),  # Крестик в баннере cookies
+            (By.CSS_SELECTOR, "div._13xlah4"),
+            (By.XPATH, "//div[contains(@class, '_abwj39')]//div[contains(@class, '_13xlah4')]"),
+            (By.XPATH, "//div[contains(., 'Мы используем cookies')]/following-sibling::div[.//svg]"),
+        ]
+        for by, selector in selectors:
+            try:
+                elements = driver.find_elements(by, selector)
+                for el in elements:
+                    if el.is_displayed() and el.is_enabled():
+                        el.click()
+                        thread_print("✅ Попап cookies 2GIS закрыт")
+                        time.sleep(1)
+                        return True
+            except Exception:
+                pass
+        return False
+    except Exception as e:
+        thread_print(f"⚠️ Ошибка закрытия попапа cookies 2GIS: {e}")
+        return False
+
+
+def close_2gis_app_popup(driver):
+    """
+    Закрывает попап 2GIS «Выберите где продолжить» — клик по кнопке «Остаться».
+    """
+    try:
+        # Кнопка «Остаться» — остаёмся на веб-версии
+        selectors = [
+            (By.XPATH, "//button[contains(text(), 'Остаться')]"),
+            (By.CSS_SELECTOR, "button._xppdink"),
+            (By.XPATH, "//*[contains(@class, '_xppdink') and contains(text(), 'Остаться')]"),
+        ]
+        for by, selector in selectors:
+            try:
+                buttons = driver.find_elements(by, selector)
+                for btn in buttons:
+                    if btn.is_displayed() and btn.is_enabled():
+                        btn.click()
+                        thread_print("✅ Попап 2GIS закрыт (Остаться)")
+                        time.sleep(1)
+                        return True
+            except Exception:
+                pass
+        return False
+    except Exception as e:
+        thread_print(f"⚠️ Ошибка закрытия попапа 2GIS: {e}")
+        return False
+
+
 # Экспорт основных функций
 __all__ = [
     'handle_popup_simple',
-    'find_not_now_button', 
+    'find_not_now_button',
     'detect_app_popup_simple',
-    'click_button_simple'
+    'click_button_simple',
+    'close_2gis_app_popup',
+    'close_2gis_cookie_popup',
 ] 

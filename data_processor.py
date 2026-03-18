@@ -88,7 +88,7 @@ def process_and_save_results(reviews, card_id, url, checkpoint_file=None, page_i
         print("📊 ИТОГОВАЯ СТАТИСТИКА")
         print("="*50)
         print(f"🔗 URL: {url}")
-        print(f"🆔 ID карточки: {card_id}")
+        print(f"🔗 URL: {card_id}")
         print(f"📝 Всего отзывов: {stats['total_reviews']}")
         print(f"📄 С текстом: {stats['reviews_with_text']}")
         print(f"⭐ С рейтингом: {stats['reviews_with_rating']}")
