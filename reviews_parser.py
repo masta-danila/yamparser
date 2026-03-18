@@ -1370,13 +1370,13 @@ def should_stop_parsing(checkpoint_info: dict, review_data: dict, card_id: str) 
         print(f"❌ Ошибка проверки checkpoint: {e}")
         return False
 
-def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None, max_retries=3, card_id=None):
+def get_reviews_page_with_retry(url, device_type="desktop", wait_time=5, max_days_back=30, max_reviews_limit=100, use_proxy=True, profile_path=None, max_retries=2, card_id=None):  # 3 попытки всего
     """
     Обертка для get_reviews_page с повторными попытками при таймауте
     При ошибке создает новый браузер с новым профилем и прокси
     
     Args:
-        max_retries: максимальное количество повторных попыток (по умолчанию 3)
+        max_retries: максимальное количество повторных попыток (2 = 3 попытки всего)
         остальные параметры как в get_reviews_page
     
     Returns:
@@ -1633,6 +1633,13 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             if len(reviews_data) < original_count:
                 print(f"   ❌ Отфильтровано старых отзывов: {original_count - len(reviews_data)}")
                 print(f"   ✅ Остается для сохранения: {len(reviews_data)}")
+
+        # Отзывы не найдены — критичная ошибка (элементы страницы или структура изменились)
+        if not reviews_data:
+            raise RuntimeError(
+                "Отзывы не найдены на странице Яндекс.Карт. "
+                "Проверьте структуру страницы или наличие отзывов."
+            )
         
         # Сохраняем отзывы в базу данных
         save_result = save_reviews_to_database(reviews_data, card_id)
@@ -1710,7 +1717,7 @@ def main():
     DEVICE_TYPE = "mobile"    # Тип устройства: "mobile" или "desktop" 
     WAIT_TIME = 3             # Время ожидания загрузки страницы (секунды)
     USE_PROXY = True          # Использовать прокси по умолчанию
-    MAX_RETRIES = 3           # Количество повторных попыток при таймауте
+    MAX_RETRIES = 2           # 3 попытки всего (1 начальная + 2 повтора)
     # =============================================
     
     # Проверяем аргументы командной строки

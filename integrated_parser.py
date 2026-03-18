@@ -189,6 +189,11 @@ class IntegratedParser:
         
         return date_str
 
+    def _get_last_check_str(self) -> str:
+        """Формат даты/времени для колонки «Последняя проверка»."""
+        from datetime import datetime
+        return datetime.now().strftime('%d.%m.%Y %H:%M')
+
     def _get_target_date_from_sheet_reviews(self, sheet_reviews: List[Dict]) -> Optional[str]:
         """
         Извлекает целевую дату искомого отзыва (самую старую среди sheet_reviews).
@@ -416,15 +421,17 @@ class IntegratedParser:
             # Определяем платформу по URL и получаем обработчик
             handler = get_handler_for_url(url)
             if not handler:
+                err = f"Платформа не поддерживается для URL: {url}"
+                last_check = self._get_last_check_str()
+                updates = [
+                    {'spreadsheet_url': self.spreadsheet_url, 'sheet_name': sheet_name,
+                     'row': r['row'], 'last_check': last_check, 'error': err}
+                    for r in sheet_reviews
+                ]
                 return {
-                    'url': url,
-                    'sheet_name': sheet_name,
-                    'parsing_success': False,
-                    'parsed_reviews': [],
-                    'new_reviews': [],
-                    'matches': [],
-                    'updates': [],
-                    'error': f"Платформа не поддерживается для URL: {url}"
+                    'url': url, 'sheet_name': sheet_name, 'parsing_success': False,
+                    'parsed_reviews': [], 'new_reviews': [], 'matches': [],
+                    'updates': updates, 'error': err
                 }
             
             thread_print(f"📌 Платформа: {handler.name}")
@@ -442,7 +449,7 @@ class IntegratedParser:
                 max_days_back=max_days_back,
                 max_reviews_limit=max_reviews_limit,
                 use_proxy=True,
-                max_retries=3,
+                max_retries=2,
                 target_date=target_date,
             )
             
@@ -450,16 +457,16 @@ class IntegratedParser:
                 error_msg = f"Ошибка парсинга URL {url}"
                 if platform_result and platform_result.get('error'):
                     error_msg += f": {platform_result['error']}"
-                
+                last_check = self._get_last_check_str()
+                updates = [
+                    {'spreadsheet_url': self.spreadsheet_url, 'sheet_name': sheet_name,
+                     'row': r['row'], 'last_check': last_check, 'error': error_msg}
+                    for r in sheet_reviews
+                ]
                 return {
-                    'url': url,
-                    'sheet_name': sheet_name,
-                    'parsing_success': False,
-                    'parsed_reviews': [],
-                    'new_reviews': [],
-                    'matches': [],
-                    'updates': [],
-                    'error': error_msg
+                    'url': url, 'sheet_name': sheet_name, 'parsing_success': False,
+                    'parsed_reviews': [], 'new_reviews': [], 'matches': [],
+                    'updates': updates, 'error': error_msg
                 }
             
             # Получаем информацию о результатах парсинга
@@ -500,9 +507,11 @@ class IntegratedParser:
                 thread_print(f"   📝 Текст из таблицы: {match['sheet_review']['text'][:100]}...")
                 thread_print(f"   🌐 Текст с карточки: {match['parsed_review']['text'][:100]}...")
             
-            # Обновляем статусы в Google Sheets
+            # Обновляем статусы и «Последняя проверка» + «Ошибки»
+            last_check = self._get_last_check_str()
             updates = []
             matched_sheet_reviews = {m['sheet_review']['row'] for m in matches}
+            rows_with_status_update = set()
             
             if matches:
                 thread_print(f"📝 Обновляем статусы в Google Sheets для {len(matches)} совпадений...")
@@ -510,7 +519,6 @@ class IntegratedParser:
                     for match in matches:
                         sheet_review = match['sheet_review']
                         parsed_review = match['parsed_review']
-                        # Только для "Модерация" -> "Размещен" (для "Размещен" совпадение = отзыв на месте, ничего не меняем)
                         if sheet_review.get('status') == 'Модерация':
                             publication_date = self._format_date_for_sheets(parsed_review.get('date', ''))
                             thread_print(f"📝 Совпадение добавлено для батчевого размещения: строка {sheet_review['row']}")
@@ -520,14 +528,16 @@ class IntegratedParser:
                                 'row': sheet_review['row'],
                                 'status': 'Размещен',
                                 'date': publication_date,
-                                'similarity_percent': match['similarity_percent']
+                                'similarity_percent': match['similarity_percent'],
+                                'last_check': last_check,
+                                'error': ''
                             }
                             updates.append(update_data)
+                            rows_with_status_update.add(sheet_review['row'])
                 except Exception as e:
                     thread_print(f"❌ Ошибка при обновлении Google Sheets: {e}")
                     result['sheets_update_error'] = str(e)
             
-            # Для "Размещен": если отзыв НЕ найден на карточке -> статус "Удален"
             for sheet_review in sheet_reviews:
                 if sheet_review.get('status') == 'Размещен' and sheet_review['row'] not in matched_sheet_reviews:
                     thread_print(f"🗑️ Отзыв удалён с карточки: строка {sheet_review['row']} -> 'Удален'")
@@ -537,9 +547,23 @@ class IntegratedParser:
                         'row': sheet_review['row'],
                         'status': 'Удален',
                         'date': None,
-                        'similarity_percent': 0
+                        'similarity_percent': 0,
+                        'last_check': last_check,
+                        'error': ''
                     }
                     updates.append(update_data)
+                    rows_with_status_update.add(sheet_review['row'])
+            
+            # Для строк без смены статуса — только «Последняя проверка» и «Ошибки» (очищаем ошибку при успехе)
+            for sheet_review in sheet_reviews:
+                if sheet_review['row'] not in rows_with_status_update:
+                    updates.append({
+                        'spreadsheet_url': self.spreadsheet_url,
+                        'sheet_name': sheet_name,
+                        'row': sheet_review['row'],
+                        'last_check': last_check,
+                        'error': ''
+                    })
             
             if not updates:
                 thread_print("ℹ️ Нет обновлений статусов")
@@ -550,9 +574,18 @@ class IntegratedParser:
             
         except Exception as e:
             error_msg = f"Ошибка обработки URL {url}: {e}"
-            result['error'] = error_msg
             thread_print(f"❌ {error_msg}")
-            return result
+            last_check = self._get_last_check_str()
+            updates = [
+                {'spreadsheet_url': self.spreadsheet_url, 'sheet_name': sheet_name,
+                 'row': r['row'], 'last_check': last_check, 'error': error_msg}
+                for r in sheet_reviews
+            ]
+            return {
+                'url': url, 'sheet_name': sheet_name, 'parsing_success': False,
+                'parsed_reviews': [], 'new_reviews': [], 'matches': [],
+                'updates': updates, 'error': error_msg
+            }
     
     def process_sheet_worker(self, sheet_name: str, worker_id: int, 
                            device_type: str = "mobile", max_days_back: int = 30,
@@ -632,9 +665,12 @@ class IntegratedParser:
                 if i < len(urls_data):
                     time.sleep(delay_between_urls)
             
-            # Статусы будут обновлены централизованно в ЭТАПЕ 3
+            # Накапливаем обновления для централизованного батча в ЭТАПЕ 3
             if all_updates:
                 thread_print(f"📝 Поток {worker_id}: Накоплено {len(all_updates)} обновлений для финального батча")
+                with self.lock:
+                    self.placement_updates.extend(all_updates)
+                    self.results['total_updates'] += len(all_updates)
             
             # Обновляем статистику
             with self.lock:
@@ -715,6 +751,7 @@ class IntegratedParser:
             
             # Инициализируем общее количество URL (будет подсчитано в процессе)
             self.results['total_urls'] = 0
+            self.placement_updates = []  # Накопитель для ЭТАПА 3
             thread_print(f"🌐 Количество URL будет подсчитано в процессе обработки")
             
             # Запускаем потоки
@@ -768,6 +805,16 @@ class IntegratedParser:
             # Ожидаем завершения всех потоков
             for thread in threads:
                 thread.join()
+            
+            # ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов и «Последняя проверка» + «Ошибки»
+            if self.placement_updates:
+                thread_print(f"\n🚀 ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ ({len(self.placement_updates)} записей)")
+                thread_print("="*70)
+                placement_results = self.sheets_updater.batch_update_reviews(self.placement_updates)
+                thread_print(f"🎯 ИТОГ ЭТАПА 3: Обновлено {placement_results['success']} записей")
+                if placement_results['failed'] > 0:
+                    thread_print(f"❌ Ошибок размещения: {placement_results['failed']}")
+                thread_print("="*70)
             
             # Мониторинг ресурсов после завершения всех потоков
             thread_print("📊 Мониторинг ресурсов ПОСЛЕ завершения всех потоков:")
@@ -1026,14 +1073,16 @@ def main():
                     local_results['total_matches'] += len(url_result['matches'])
                 local_results['total_updates'] += len(url_result.get('updates', []))
                 
-                # Накапливаем обновления (Размещен + Удален)
+                # Накапливаем обновления (статус + Последняя проверка + Ошибки)
                 for update in url_result.get('updates', []):
                     placement_data = {
                         'spreadsheet_url': spreadsheet_url,
                         'sheet_name': sheet_name,
                         'row': update.get('row'),
-                        'status': update.get('status', 'Размещен'),
-                        'date': update.get('date')
+                        'status': update.get('status'),
+                        'date': update.get('date'),
+                        'last_check': update.get('last_check'),
+                        'error': update.get('error', '')
                     }
                     local_results['placement_updates'].append(placement_data)
                 

@@ -891,31 +891,31 @@ def close_zoon_cookie_popup(driver):
 def click_zoon_reviews_tab(driver):
     """
     Кликает на вкладку «Отзывы» в Zoon — переход к списку отзывов.
+    Вызывает RuntimeError, если элемент не найден (критичный элемент, не попап).
     """
-    try:
-        selectors = [
-            (By.CSS_SELECTOR, "a[data-id='reviews'][data-type='reviews']"),
-            (By.XPATH, "//a[contains(@class, 'js-nav-item') and contains(@data-id, 'reviews')]"),
-            (By.XPATH, "//a[contains(@href, '/reviews/') and contains(text(), 'Отзывы')]"),
-            (By.XPATH, "//a[contains(., 'Отзывы') and contains(@href, 'reviews')]"),
-        ]
-        for by, selector in selectors:
-            try:
-                elements = driver.find_elements(by, selector)
-                for el in elements:
-                    if el.is_displayed() and el.is_enabled():
-                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                        time.sleep(0.3)
-                        driver.execute_script("arguments[0].click();", el)
-                        thread_print("✅ Вкладка «Отзывы» Zoon открыта")
-                        time.sleep(2)
-                        return True
-            except Exception:
-                pass
-        return False
-    except Exception as e:
-        thread_print(f"⚠️ Ошибка клика по вкладке Отзывы Zoon: {e}")
-        return False
+    selectors = [
+        (By.CSS_SELECTOR, "a[data-id='reviews'][data-type='reviews']"),
+        (By.XPATH, "//a[contains(@class, 'js-nav-item') and contains(@data-id, 'reviews')]"),
+        (By.XPATH, "//a[contains(@href, '/reviews/') and contains(text(), 'Отзывы')]"),
+        (By.XPATH, "//a[contains(., 'Отзывы') and contains(@href, 'reviews')]"),
+    ]
+    for by, selector in selectors:
+        try:
+            elements = driver.find_elements(by, selector)
+            for el in elements:
+                if el.is_displayed() and el.is_enabled():
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                    time.sleep(0.3)
+                    driver.execute_script("arguments[0].click();", el)
+                    thread_print("✅ Вкладка «Отзывы» Zoon открыта")
+                    time.sleep(2)
+                    return True
+        except Exception:
+            pass
+    raise RuntimeError(
+        "Вкладка «Отзывы» не найдена на странице Zoon. "
+        "Проверьте структуру страницы или доступность сайта."
+    )
 
 
 # Экспорт основных функций

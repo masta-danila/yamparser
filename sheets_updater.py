@@ -53,95 +53,126 @@ class SheetsUpdater:
     
     def update_review_status(self, spreadsheet_url: str, sheet_name: str, 
                            row_number: int,             new_status: str, 
-                           publication_date: Optional[str] = None) -> bool:
+                           publication_date: Optional[str] = None,
+                           last_check: Optional[str] = None,
+                           error_text: Optional[str] = None) -> bool:
         """
-        Обновляет статус отзыва в Google Sheets
-        
-        Args:
-            spreadsheet_url: URL таблицы Google Sheets
-            sheet_name: Название листа
-            row_number: Номер строки для обновления (1-based)
-            new_status: Новый статус ("Размещен")
-            publication_date: Дата публикации (опционально)
-            
-        Returns:
-            True если обновление успешно, False иначе
+        Обновляет статус отзыва в Google Sheets.
+        Опционально обновляет «Последняя проверка» и «Ошибки».
         """
         if not self.gc:
             thread_print("❌ Google Sheets API не настроен")
             return False
         
         try:
-            # Открываем таблицу
             spreadsheet_id = self.extract_spreadsheet_id(spreadsheet_url)
             spreadsheet = self.gc.open_by_key(spreadsheet_id)
             worksheet = spreadsheet.worksheet(sheet_name)
-            
-            # Получаем заголовки для определения колонок
             headers = worksheet.row_values(1)
             
-            # Находим индексы нужных колонок
             status_col = None
             date_col = None
+            last_check_col = None
+            error_col = None
             
             for i, header in enumerate(headers, 1):
                 if header == "Статус":
                     status_col = i
                 elif header == "Дата публикации":
                     date_col = i
+                elif header == "Последняя проверка":
+                    last_check_col = i
+                elif header == "Ошибки":
+                    error_col = i
             
             if not status_col:
                 thread_print(f"❌ Колонка 'Статус' не найдена в листе '{sheet_name}'")
                 return False
             
-            # Обновляем статус
             worksheet.update_cell(row_number, status_col, new_status)
             thread_print(f"✅ Статус обновлен: лист '{sheet_name}', строка {row_number} -> '{new_status}'")
             
-            # Обновляем дату публикации если указана
             if publication_date and date_col:
                 worksheet.update_cell(row_number, date_col, publication_date)
                 thread_print(f"✅ Дата публикации обновлена: строка {row_number} -> '{publication_date}'")
+            
+            if last_check_col is not None and last_check is not None:
+                worksheet.update_cell(row_number, last_check_col, last_check)
+            if error_col is not None:
+                worksheet.update_cell(row_number, error_col, error_text or "")
             
             return True
             
         except Exception as e:
             thread_print(f"❌ Ошибка обновления статуса: {e}")
             return False
+
+    def update_check_info(self, spreadsheet_url: str, sheet_name: str,
+                         row_number: int, last_check: str, error_text: str = "") -> bool:
+        """
+        Обновляет только «Последняя проверка» и «Ошибки» (без статуса).
+        Если колонок нет — возвращает True (без ошибки).
+        """
+        if not self.gc:
+            return False
+        try:
+            last_check_col = self.find_column_index(spreadsheet_url, sheet_name, "Последняя проверка")
+            error_col = self.find_column_index(spreadsheet_url, sheet_name, "Ошибки")
+            if not last_check_col and not error_col:
+                return True
+            spreadsheet_id = self.extract_spreadsheet_id(spreadsheet_url)
+            spreadsheet = self.gc.open_by_key(spreadsheet_id)
+            worksheet = spreadsheet.worksheet(sheet_name)
+            if last_check_col:
+                worksheet.update_cell(row_number, last_check_col, last_check)
+            if error_col:
+                worksheet.update_cell(row_number, error_col, error_text or "")
+            return True
+        except Exception as e:
+            thread_print(f"❌ Ошибка обновления проверки: {e}")
+            return False
     
     def batch_update_reviews(self, updates: List[Dict]) -> Dict[str, int]:
         """
-        Пакетное обновление статусов отзывов
-        
-        Args:
-            updates: Список словарей с информацией об обновлениях
-                    Каждый словарь должен содержать:
-                    - spreadsheet_url: URL таблицы
-                    - sheet_name: Название листа
-                    - row: Номер строки
-                    - status: Новый статус
-                    - date: Дата публикации (опционально)
-        
-        Returns:
-            Словарь с результатами: {'success': count, 'failed': count}
+        Пакетное обновление статусов и/или «Последняя проверка» + «Ошибки».
+        Каждый update: row, last_check, error; опционально status, date.
+        Колонки «Последняя проверка» и «Ошибки» создаются автоматически, если отсутствуют.
         """
         if not updates:
             thread_print("⚠️ Нет обновлений для выполнения")
             return {'success': 0, 'failed': 0}
         
-        results = {'success': 0, 'failed': 0}
+        # Убеждаемся, что колонки есть во всех затронутых листах
+        seen_sheets = set()
+        for update in updates:
+            key = (update.get('spreadsheet_url'), update.get('sheet_name'))
+            if key not in seen_sheets and key[0] and key[1]:
+                seen_sheets.add(key)
+                self.ensure_columns_exist(key[0], key[1])
         
+        results = {'success': 0, 'failed': 0}
         thread_print(f"📝 Начинаем пакетное обновление {len(updates)} записей...")
         
         for i, update in enumerate(updates, 1):
             try:
-                success = self.update_review_status(
-                    spreadsheet_url=update['spreadsheet_url'],
-                    sheet_name=update['sheet_name'],
-                    row_number=update['row'],
-                    new_status=update['status'],
-                    publication_date=update.get('date')
-                )
+                if update.get('status') is not None:
+                    success = self.update_review_status(
+                        spreadsheet_url=update['spreadsheet_url'],
+                        sheet_name=update['sheet_name'],
+                        row_number=update['row'],
+                        new_status=update['status'],
+                        publication_date=update.get('date'),
+                        last_check=update.get('last_check'),
+                        error_text=update.get('error', '')
+                    )
+                else:
+                    success = self.update_check_info(
+                        spreadsheet_url=update['spreadsheet_url'],
+                        sheet_name=update['sheet_name'],
+                        row_number=update['row'],
+                        last_check=update.get('last_check', ''),
+                        error_text=update.get('error', '')
+                    )
                 
                 if success:
                     results['success'] += 1
@@ -186,6 +217,38 @@ class SheetsUpdater:
             thread_print(f"❌ Ошибка получения значения ячейки: {e}")
             return None
     
+    def ensure_columns_exist(self, spreadsheet_url: str, sheet_name: str) -> bool:
+        """
+        Добавляет колонки «Последняя проверка» и «Ошибки», если их нет.
+        Возвращает True при успехе.
+        """
+        if not self.gc:
+            return False
+        try:
+            spreadsheet_id = self.extract_spreadsheet_id(spreadsheet_url)
+            spreadsheet = self.gc.open_by_key(spreadsheet_id)
+            worksheet = spreadsheet.worksheet(sheet_name)
+            headers = worksheet.row_values(1)
+            
+            cols_to_add = []
+            if "Последняя проверка" not in headers:
+                cols_to_add.append("Последняя проверка")
+            if "Ошибки" not in headers:
+                cols_to_add.append("Ошибки")
+            
+            if not cols_to_add:
+                return True
+            
+            next_col = len(headers) + 1
+            for col_name in cols_to_add:
+                worksheet.update_cell(1, next_col, col_name)
+                thread_print(f"✅ Добавлена колонка '{col_name}' в лист '{sheet_name}'")
+                next_col += 1
+            return True
+        except Exception as e:
+            thread_print(f"❌ Ошибка добавления колонок в '{sheet_name}': {e}")
+            return False
+
     def find_column_index(self, spreadsheet_url: str, sheet_name: str, 
                          column_name: str) -> Optional[int]:
         """

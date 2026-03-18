@@ -39,7 +39,7 @@ class YandexMapsHandler(BasePlatformHandler):
         max_days_back: int = 30,
         max_reviews_limit: int = 100,
         use_proxy: bool = True,
-        max_retries: int = 3,
+        max_retries: int = 2,
         target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Парсит отзывы с Яндекс.Карт через get_reviews_page_with_retry."""

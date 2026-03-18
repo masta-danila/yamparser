@@ -32,7 +32,7 @@ class TwoGisHandler(BasePlatformHandler):
         max_days_back: int = 30,
         max_reviews_limit: int = 100,
         use_proxy: bool = True,
-        max_retries: int = 3,
+        max_retries: int = 2,
         target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -120,13 +120,9 @@ class TwoGisHandler(BasePlatformHandler):
 
                 time.sleep(1)
 
-                # Кликаем по вкладке «Отзывы»
-                try:
-                    from .page_utils import click_reviews_tab
-                    click_reviews_tab(driver)
-                except Exception as e:
-                    thread_print(f"⚠️ Вкладка Отзывы 2GIS: {e}")
-
+                # Вкладка «Отзывы» — критичный элемент, при отсутствии выбросит ошибку
+                from .page_utils import click_reviews_tab
+                click_reviews_tab(driver)
                 time.sleep(2)  # Даём отзывам загрузиться
 
                 # Извлекаем отзывы (прокрутка, парсинг, фильтр по дате)
@@ -143,6 +139,16 @@ class TwoGisHandler(BasePlatformHandler):
                     driver.quit()
                     driver = None
                 cleanup_all_profiles()
+
+                if not reviews_data:
+                    return {
+                        "success": False,
+                        "reviews": [],
+                        "reviews_found": 0,
+                        "error": "Отзывы не найдены на странице 2GIS. Проверьте структуру страницы или наличие отзывов.",
+                        "url": url,
+                        "card_id": card_id,
+                    }
 
                 return {
                     "success": True,
