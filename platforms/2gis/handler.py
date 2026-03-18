@@ -71,6 +71,15 @@ class TwoGisHandler(BasePlatformHandler):
         initialize_profiles_cleanup()
         last_error = None
 
+        # Для 2GIS можно использовать desktop, если mobile не скроллится
+        try:
+            from config import TWO_GIS_DEVICE_TYPE
+            effective_device = TWO_GIS_DEVICE_TYPE
+        except ImportError:
+            effective_device = device_type
+        if effective_device != device_type:
+            thread_print(f"📱 2GIS: используем {effective_device} (config.TWO_GIS_DEVICE_TYPE)")
+
         for attempt in range(max_retries + 1):
             driver = None
             try:
@@ -80,7 +89,7 @@ class TwoGisHandler(BasePlatformHandler):
                 else:
                     thread_print(f"🚀 Открываем страницу 2GIS: {url}")
 
-                driver = setup_driver(device_type, proxy_manager, None)
+                driver = setup_driver(effective_device, proxy_manager, None)
 
                 if not driver:
                     last_error = "Не удалось запустить браузер (все прокси недоступны)"

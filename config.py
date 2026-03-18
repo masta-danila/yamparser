@@ -11,11 +11,12 @@ CREDENTIALS_FILE = "credentials.json"
 
 # Настройки парсинга
 DEVICE_TYPE = "mobile"                  # Тип устройства: "mobile" или "desktop"
+TWO_GIS_DEVICE_TYPE = "mobile"          # Для 2GIS: "mobile" или "desktop"
 WAIT_TIME = 3                           # Время ожидания в секундах
 MAX_DAYS_BACK = 30                      # Максимальное количество дней назад для первичного парсинга
 MAX_REVIEWS_LIMIT = 1000                 # Максимальное количество отзывов для парсинга
 USE_PROXY = True                        # Использовать ли прокси
-HEADLESS_MODE = True                    # Скрывать браузеры (True) или показывать (False)
+HEADLESS_MODE = False                    # Скрывать браузеры (True) или показывать (False)
 
 # Настройки Google Sheets
 SIMILARITY_THRESHOLD = 0.85             # Порог совпадения текстов (85%)
