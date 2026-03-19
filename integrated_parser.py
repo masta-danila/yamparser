@@ -634,7 +634,7 @@ class IntegratedParser:
                 
                 # Для отзывов «Размещен» парсим глубже (recheck_days), иначе — max_days_back
                 has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
-                effective_max_days = max(max_days_back, recheck_days) if has_placed else max_days_back
+                effective_max_days = max(max_days_back, recheck_days + RECHECK_DAYS_DELTA) if has_placed else max_days_back
                 
                 # Обрабатываем URL
                 url_result = self.process_url_reviews(
@@ -1055,7 +1055,7 @@ def main():
                         
                         # Для отзывов «Размещен» парсим глубже (RECHECK_DAYS), иначе — MAX_DAYS_BACK
                         has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
-                        effective_max_days = max(MAX_DAYS_BACK, RECHECK_DAYS) if has_placed else MAX_DAYS_BACK
+                        effective_max_days = max(MAX_DAYS_BACK, RECHECK_DAYS + RECHECK_DAYS_DELTA) if has_placed else MAX_DAYS_BACK
                         
                         # Обрабатываем конкретный URL
                         url_result = parser.process_url_reviews(
@@ -1227,7 +1227,7 @@ from config import (
     SPREADSHEETS, CREDENTIALS_FILE, 
     DEVICE_TYPE, WAIT_TIME, MAX_DAYS_BACK, MAX_REVIEWS_LIMIT, 
     USE_PROXY, SIMILARITY_THRESHOLD, MAX_WORKERS, 
-    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS, RECHECK_DAYS,
+    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS, RECHECK_DAYS, RECHECK_DAYS_DELTA,
     RUN_INTERVAL_HOURS
 )
 
