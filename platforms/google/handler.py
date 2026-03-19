@@ -68,7 +68,7 @@ class GoogleMapsHandler(BasePlatformHandler):
                     "card_id": card_id,
                 }
 
-            driver.set_page_load_timeout(30)
+            driver.set_page_load_timeout(60)
             driver.get(url)
             thread_print("✅ Страница Google Maps загружена!")
 

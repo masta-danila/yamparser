@@ -96,7 +96,7 @@ class TwoGisHandler(BasePlatformHandler):
                     last_error = "Не удалось запустить браузер (все прокси недоступны)"
                     continue
 
-                driver.set_page_load_timeout(30)
+                driver.set_page_load_timeout(60)
                 driver.get(url)
                 thread_print("✅ Страница 2GIS загружена!")
 

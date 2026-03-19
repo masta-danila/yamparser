@@ -1510,7 +1510,7 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         
         try:
             # Устанавливаем таймаут для загрузки страницы
-            driver.set_page_load_timeout(30)  # 30 секунд таймаут
+            driver.set_page_load_timeout(60)  # 60 секунд таймаут
             driver.get(normalized_url)
             print("✅ Страница успешно загружена!")
             

@@ -257,7 +257,7 @@ def setup_driver(device_type="desktop", proxy_manager=None, profile_path=None):
             thread_print(f"🧪 Тестируем соединение через прокси {current_proxy['ip']}:{current_proxy['port']}...")
             try:
                 # Быстрая проверка соединения
-                driver.set_page_load_timeout(15)  # Таймаут 15 секунд
+                driver.set_page_load_timeout(30)  # Таймаут 30 секунд
                 
                 driver.get("http://icanhazip.com")
                 

@@ -262,6 +262,10 @@ def click_sort_by_date(driver):
         sort_button_selector = "div.rating-ranking-view[role='button']"
         
         try:
+            # Ждём появления кнопки сортировки (JS может рендерить после загрузки страницы)
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, sort_button_selector))
+            )
             sort_button = driver.find_element(By.CSS_SELECTOR, sort_button_selector)
             if sort_button.is_displayed():
                 button_text = sort_button.text.strip()
@@ -285,7 +289,7 @@ def click_sort_by_date(driver):
         try:
             driver.execute_script("arguments[0].click();", sort_button)
             print("🖱️ JavaScript клик по кнопке сортировки выполнен!")
-            time.sleep(1)  # Ждем появления выпадающего меню
+            time.sleep(2)  # Ждем появления выпадающего меню
         except Exception as e:
             print(f"❌ Ошибка клика по кнопке сортировки: {e}")
             return False

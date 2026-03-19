@@ -67,7 +67,7 @@ class ZoonHandler(BasePlatformHandler):
                     last_error = "Не удалось запустить браузер"
                     continue
 
-                driver.set_page_load_timeout(30)
+                driver.set_page_load_timeout(60)
                 driver.get(url)
                 thread_print("✅ Страница Zoon загружена!")
                 time.sleep(2)
