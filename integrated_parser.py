@@ -865,346 +865,361 @@ def main():
     setup_logging()
     logger = logging.getLogger(__name__)
     
-    logger.info("🚀 Запуск интегрированного парсера Google Sheets + Яндекс.Карт")
-    logger.info("="*60)
-    
-    # Инициализация с очисткой старых профилей
-    initialize_profiles_cleanup()
-    
-    if not SPREADSHEETS:
-        logger.error("❌ Не настроены таблицы для обработки!")
-        logger.error("Добавьте URL таблиц в список SPREADSHEETS в настройках")
-        return
-    
-    logger.info(f"📊 Найдено таблиц для обработки: {len(SPREADSHEETS)}")
-    
-    # ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов ДО парсинга
-    logger.info(f"\n🚀 ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов во всех таблицах")
-    logger.info("="*70)
-    
-    from sheets_updater import SheetsUpdater
-    batch_updater = SheetsUpdater(CREDENTIALS_FILE)
-    
-    total_rejections = 0
-    for i, spreadsheet_url in enumerate(SPREADSHEETS, 1):
-        logger.info(f"📋 Обрабатываем таблицу {i}/{len(SPREADSHEETS)}")
-        
-        rejection_results = batch_updater.batch_reject_old_reviews(
-            spreadsheet_url=spreadsheet_url,
-            max_days_back=MAX_DAYS_BACK
-        )
-        
-        total_rejections += rejection_results['success']
-        logger.info(f"✅ Таблица {i}: отклонено {rejection_results['success']} старых отзывов")
-    
-    logger.info(f"\n🎯 ИТОГ ЭТАПА 1: Всего отклонено {total_rejections} старых отзывов")
-    logger.info("="*70)
-    
-    # ЭТАП 2: Сбор URL для парсинга (после отклонения старых)
-    logger.info(f"\n📋 ЭТАП 2: Сбор URL для парсинга...")
-    
-    # Собираем ВСЕ URL из ВСЕХ листов ВСЕХ таблиц
-    all_urls = []  # Список кортежей (spreadsheet_url, sheet_name, url, sheet_reviews)
-    reader = GoogleSheetsReader(CREDENTIALS_FILE)
-    
-    print("\n📋 Сбор информации о всех URL...")
-    total_sheets = 0
-    total_urls_count = 0
-    
-    for i, spreadsheet_url in enumerate(SPREADSHEETS, 1):
-        print(f"🔗 Таблица {i}/{len(SPREADSHEETS)}: {spreadsheet_url}")
-        
+    while True:
         try:
-            # Получаем ID таблицы и список листов
-            spreadsheet_id = reader.extract_spreadsheet_id(spreadsheet_url)
-            sheet_names = reader.get_all_sheet_names_api(spreadsheet_id)
+            logger.info("🚀 Запуск интегрированного парсера Google Sheets + Яндекс.Карт")
+            logger.info("="*60)
             
-            if not sheet_names:
-                print(f"⚠️ Таблица {i}: Нет доступных листов")
-                continue
+            # Инициализация с очисткой старых профилей
+            initialize_profiles_cleanup()
             
-            print(f"📄 Найдено листов: {len(sheet_names)}")
-            total_sheets += len(sheet_names)
+            if not SPREADSHEETS:
+                logger.error("❌ Не настроены таблицы для обработки!")
+                logger.error("Добавьте URL таблиц в список SPREADSHEETS в настройках")
+                break
             
-            # Обрабатываем каждый лист и собираем URL
-            for sheet_name in sheet_names:
-                print(f"   📋 Анализируем лист: {sheet_name}")
+            logger.info(f"📊 Найдено таблиц для обработки: {len(SPREADSHEETS)}")
+
+            # ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов ДО парсинга
+            logger.info(f"\n🚀 ЭТАП 1: БАТЧЕВОЕ ОТКЛОНЕНИЕ старых отзывов во всех таблицах")
+            logger.info("="*70)
+            
+            from sheets_updater import SheetsUpdater
+            batch_updater = SheetsUpdater(CREDENTIALS_FILE)
+            
+            total_rejections = 0
+            for i, spreadsheet_url in enumerate(SPREADSHEETS, 1):
+                logger.info(f"📋 Обрабатываем таблицу {i}/{len(SPREADSHEETS)}")
+                
+                rejection_results = batch_updater.batch_reject_old_reviews(
+                    spreadsheet_url=spreadsheet_url,
+                    max_days_back=MAX_DAYS_BACK
+                )
+                
+                total_rejections += rejection_results['success']
+                logger.info(f"✅ Таблица {i}: отклонено {rejection_results['success']} старых отзывов")
+            
+            logger.info(f"\n🎯 ИТОГ ЭТАПА 1: Всего отклонено {total_rejections} старых отзывов")
+            logger.info("="*70)
+            
+            # ЭТАП 2: Сбор URL для парсинга (после отклонения старых)
+            logger.info(f"\n📋 ЭТАП 2: Сбор URL для парсинга...")
+            
+            # Собираем ВСЕ URL из ВСЕХ листов ВСЕХ таблиц
+            all_urls = []  # Список кортежей (spreadsheet_url, sheet_name, url, sheet_reviews)
+            reader = GoogleSheetsReader(CREDENTIALS_FILE)
+            
+            print("\n📋 Сбор информации о всех URL...")
+            total_sheets = 0
+            total_urls_count = 0
+            
+            for i, spreadsheet_url in enumerate(SPREADSHEETS, 1):
+                print(f"🔗 Таблица {i}/{len(SPREADSHEETS)}: {spreadsheet_url}")
                 
                 try:
-                    # Создаем временный парсер для получения данных листа
-                    temp_parser = IntegratedParser(
-                        spreadsheet_url=spreadsheet_url,
-                        credentials_file=CREDENTIALS_FILE,
-                        similarity_threshold=SIMILARITY_THRESHOLD,
-                        max_workers=1
-                    )
+                    # Получаем ID таблицы и список листов
+                    spreadsheet_id = reader.extract_spreadsheet_id(spreadsheet_url)
+                    sheet_names = reader.get_all_sheet_names_api(spreadsheet_id)
                     
-                    # Получаем данные листа
-                    sheet_data = temp_parser.get_sheet_data(sheet_name, MAX_DAYS_BACK, RECHECK_DAYS)
-                    
-                    if sheet_data['error']:
-                        print(f"   ⚠️ Ошибка в листе {sheet_name}: {sheet_data['error']}")
+                    if not sheet_names:
+                        print(f"⚠️ Таблица {i}: Нет доступных листов")
                         continue
                     
-                    urls_data = sheet_data['urls']
+                    print(f"📄 Найдено листов: {len(sheet_names)}")
+                    total_sheets += len(sheet_names)
                     
-                    if not urls_data:
-                        print(f"   ℹ️ Нет URL для обработки в листе {sheet_name}")
-                        continue
-                    
-                    # Добавляем все URL из этого листа
-                    for url, sheet_reviews in urls_data.items():
-                        all_urls.append((spreadsheet_url, sheet_name, url, sheet_reviews))
-                        total_urls_count += 1
-                    
-                    print(f"   ✅ Найдено URL: {len(urls_data)}")
+                    # Обрабатываем каждый лист и собираем URL
+                    for sheet_name in sheet_names:
+                        print(f"   📋 Анализируем лист: {sheet_name}")
+                        
+                        try:
+                            # Создаем временный парсер для получения данных листа
+                            temp_parser = IntegratedParser(
+                                spreadsheet_url=spreadsheet_url,
+                                credentials_file=CREDENTIALS_FILE,
+                                similarity_threshold=SIMILARITY_THRESHOLD,
+                                max_workers=1
+                            )
+                            
+                            # Получаем данные листа
+                            sheet_data = temp_parser.get_sheet_data(sheet_name, MAX_DAYS_BACK, RECHECK_DAYS)
+                            
+                            if sheet_data['error']:
+                                print(f"   ⚠️ Ошибка в листе {sheet_name}: {sheet_data['error']}")
+                                continue
+                            
+                            urls_data = sheet_data['urls']
+                            
+                            if not urls_data:
+                                print(f"   ℹ️ Нет URL для обработки в листе {sheet_name}")
+                                continue
+                            
+                            # Добавляем все URL из этого листа
+                            for url, sheet_reviews in urls_data.items():
+                                all_urls.append((spreadsheet_url, sheet_name, url, sheet_reviews))
+                                total_urls_count += 1
+                            
+                            print(f"   ✅ Найдено URL: {len(urls_data)}")
+                            
+                        except Exception as e:
+                            print(f"   ❌ Ошибка анализа листа {sheet_name}: {e}")
+                            continue
                     
                 except Exception as e:
-                    print(f"   ❌ Ошибка анализа листа {sheet_name}: {e}")
+                    print(f"❌ Ошибка при обработке таблицы {i}: {e}")
                     continue
             
-        except Exception as e:
-            print(f"❌ Ошибка при обработке таблицы {i}: {e}")
-            continue
-    
-    if not all_urls:
-        print("❌ Не найдено ни одного URL для обработки!")
-        return
-    
-    print(f"\n📊 ОБЩАЯ СТАТИСТИКА:")
-    print(f"   📋 Всего таблиц: {len(SPREADSHEETS)}")
-    print(f"   📄 Всего листов: {total_sheets}")
-    print(f"   🌐 Всего URL: {len(all_urls)}")
-    print(f"   👥 Максимум потоков: {MAX_WORKERS}")
-    print(f"   🎯 Будет использовано потоков: {min(MAX_WORKERS, len(all_urls))}")
-    
-    # Общие результаты
-    total_results = {
-        'total_spreadsheets': len(SPREADSHEETS),
-        'total_sheets': total_sheets,
-        'processed_sheets': total_sheets,  # Все листы проанализированы
-        'total_urls': len(all_urls),
-        'processed_urls': 0,
-        'total_matches': 0,
-        'total_updates': 0,
-        'placement_updates': [],  # Накопитель для финального батчевого размещения
-        'total_time': 0,
-        'errors': []
-    }
-    
-    start_time = time.time()
-    
-    # Мониторинг ресурсов перед запуском
-    print("📊 Мониторинг ресурсов ПЕРЕД запуском потоков:")
-    initial_resources = monitor_system_resources()
-    
-    # Определяем количество потоков
-    actual_workers = min(MAX_WORKERS, len(all_urls))
-    print(f"👥 Используем потоков: {actual_workers}")
-    
-    # Распределяем URL между потоками РАВНОМЕРНО
-    url_batches = []
-    for i in range(actual_workers):
-        batch = []
-        for j in range(i, len(all_urls), actual_workers):
-            batch.append(all_urls[j])
-        if batch:
-            url_batches.append(batch)
-    
-    print(f"📦 Распределение URL по потокам:")
-    for i, batch in enumerate(url_batches, 1):
-        print(f"   🧵 Поток {i}: {len(batch)} URL")
-    
-    # Блокировка для многопоточности
-    results_lock = threading.Lock()
-    
-    def process_url_batch(url_batch: List[tuple], worker_id: int, delay: int = 0):
-        """Обрабатывает батч URL в отдельном потоке"""
-        if delay > 0:
-            time.sleep(delay)
-        
-        print(f"🧵 Поток {worker_id}: Начало обработки {len(url_batch)} URL")
-        
-        # Локальные результаты потока
-        local_results = {
-            'processed_urls': 0,
-            'total_matches': 0,
-            'total_updates': 0,
-            'placement_updates': [],  # Накопитель для батчевого размещения
-            'errors': []
-        }
-        
-        for url_index, (spreadsheet_url, sheet_name, url, sheet_reviews) in enumerate(url_batch, 1):
-            print(f"🧵 Поток {worker_id}: URL {url_index}/{len(url_batch)}")
-            print(f"   📋 Лист: {sheet_name}")
-            print(f"   🌐 URL: {url}")
+            if not all_urls:
+                print("❌ Не найдено ни одного URL для обработки!")
+                return
             
-            try:
-                # Создаем парсер для конкретной таблицы
-                parser = IntegratedParser(
-                    spreadsheet_url=spreadsheet_url,
-                    credentials_file=CREDENTIALS_FILE,
-                    similarity_threshold=SIMILARITY_THRESHOLD,
-                    max_workers=1
+            print(f"\n📊 ОБЩАЯ СТАТИСТИКА:")
+            print(f"   📋 Всего таблиц: {len(SPREADSHEETS)}")
+            print(f"   📄 Всего листов: {total_sheets}")
+            print(f"   🌐 Всего URL: {len(all_urls)}")
+            print(f"   👥 Максимум потоков: {MAX_WORKERS}")
+            print(f"   🎯 Будет использовано потоков: {min(MAX_WORKERS, len(all_urls))}")
+            
+            # Общие результаты
+            total_results = {
+                'total_spreadsheets': len(SPREADSHEETS),
+                'total_sheets': total_sheets,
+                'processed_sheets': total_sheets,  # Все листы проанализированы
+                'total_urls': len(all_urls),
+                'processed_urls': 0,
+                'total_matches': 0,
+                'total_updates': 0,
+                'placement_updates': [],  # Накопитель для финального батчевого размещения
+                'total_time': 0,
+                'errors': []
+            }
+            
+            start_time = time.time()
+            
+            # Мониторинг ресурсов перед запуском
+            print("📊 Мониторинг ресурсов ПЕРЕД запуском потоков:")
+            initial_resources = monitor_system_resources()
+            
+            # Определяем количество потоков
+            actual_workers = min(MAX_WORKERS, len(all_urls))
+            print(f"👥 Используем потоков: {actual_workers}")
+            
+            # Распределяем URL между потоками РАВНОМЕРНО
+            url_batches = []
+            for i in range(actual_workers):
+                batch = []
+                for j in range(i, len(all_urls), actual_workers):
+                    batch.append(all_urls[j])
+                if batch:
+                    url_batches.append(batch)
+            
+            print(f"📦 Распределение URL по потокам:")
+            for i, batch in enumerate(url_batches, 1):
+                print(f"   🧵 Поток {i}: {len(batch)} URL")
+            
+            # Блокировка для многопоточности
+            results_lock = threading.Lock()
+            
+            def process_url_batch(url_batch: List[tuple], worker_id: int, delay: int = 0):
+                """Обрабатывает батч URL в отдельном потоке"""
+                if delay > 0:
+                    time.sleep(delay)
+                
+                print(f"🧵 Поток {worker_id}: Начало обработки {len(url_batch)} URL")
+                
+                # Локальные результаты потока
+                local_results = {
+                    'processed_urls': 0,
+                    'total_matches': 0,
+                    'total_updates': 0,
+                    'placement_updates': [],  # Накопитель для батчевого размещения
+                    'errors': []
+                }
+                
+                for url_index, (spreadsheet_url, sheet_name, url, sheet_reviews) in enumerate(url_batch, 1):
+                    print(f"🧵 Поток {worker_id}: URL {url_index}/{len(url_batch)}")
+                    print(f"   📋 Лист: {sheet_name}")
+                    print(f"   🌐 URL: {url}")
+                    
+                    try:
+                        # Создаем парсер для конкретной таблицы
+                        parser = IntegratedParser(
+                            spreadsheet_url=spreadsheet_url,
+                            credentials_file=CREDENTIALS_FILE,
+                            similarity_threshold=SIMILARITY_THRESHOLD,
+                            max_workers=1
+                        )
+                        
+                        # URL используется как идентификатор (card_id = url)
+                        card_id = sheet_reviews[0]['card_id'] if sheet_reviews else url
+                        
+                        # Для отзывов «Размещен» парсим глубже (RECHECK_DAYS), иначе — MAX_DAYS_BACK
+                        has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
+                        effective_max_days = max(MAX_DAYS_BACK, RECHECK_DAYS) if has_placed else MAX_DAYS_BACK
+                        
+                        # Обрабатываем конкретный URL
+                        url_result = parser.process_url_reviews(
+                            url=url,
+                            card_id=card_id,
+                            sheet_reviews=sheet_reviews,
+                            sheet_name=sheet_name,
+                            device_type=DEVICE_TYPE,
+                            max_days_back=effective_max_days,
+                            max_reviews_limit=MAX_REVIEWS_LIMIT
+                        )
+                        
+                        # Собираем результаты
+                        local_results['processed_urls'] += 1
+                        
+                        if url_result['matches']:
+                            local_results['total_matches'] += len(url_result['matches'])
+                        local_results['total_updates'] += len(url_result.get('updates', []))
+                        
+                        # Накапливаем обновления (статус + Последняя проверка + Ошибки)
+                        for update in url_result.get('updates', []):
+                            placement_data = {
+                                'spreadsheet_url': spreadsheet_url,
+                                'sheet_name': sheet_name,
+                                'row': update.get('row'),
+                                'status': update.get('status'),
+                                'date': update.get('date'),
+                                'last_check': update.get('last_check'),
+                                'error': update.get('error', '')
+                            }
+                            local_results['placement_updates'].append(placement_data)
+                        
+                        if url_result['error']:
+                            local_results['errors'].append({
+                                'sheet': sheet_name,
+                                'url': url,
+                                'error': url_result['error'],
+                                'worker_id': worker_id
+                            })
+                        
+                        # Пауза между URL-ами
+                        if url_index < len(url_batch):
+                            time.sleep(DELAY_BETWEEN_URLS)
+                        
+                    except Exception as e:
+                        error_msg = f"Ошибка обработки URL {url}: {e}"
+                        print(f"🧵 Поток {worker_id}: ❌ {error_msg}")
+                        local_results['errors'].append({
+                            'sheet': sheet_name,
+                            'url': url,
+                            'error': str(e),
+                            'worker_id': worker_id
+                        })
+                
+                # Обновляем общие результаты
+                with results_lock:
+                    total_results['processed_urls'] += local_results['processed_urls']
+                    total_results['total_matches'] += local_results['total_matches']
+                    total_results['total_updates'] += local_results['total_updates']
+                    total_results['placement_updates'].extend(local_results['placement_updates'])
+                    total_results['errors'].extend(local_results['errors'])
+                
+                print(f"🧵 Поток {worker_id}: Батч завершен")
+                print(f"   🌐 Обработано URL: {local_results['processed_urls']}")
+                print(f"   🎯 Найдено совпадений: {local_results['total_matches']}")
+                print(f"   📝 Обновлено статусов: {local_results['total_updates']}")
+            
+            # Запускаем потоки
+            threads = []
+            print(f"\n🚀 Запуск {len(url_batches)} потоков...")
+            
+            for i, batch in enumerate(url_batches):
+                delay = i * DELAY_BETWEEN_WORKERS
+                thread = threading.Thread(
+                    target=process_url_batch,
+                    args=(batch, i + 1, delay)
                 )
+                threads.append(thread)
+                thread.start()
+                print(f"🚀 Запущен поток {i + 1}/{len(url_batches)}")
+            
+            # Мониторинг ресурсов после запуска всех потоков
+            print("📊 Мониторинг ресурсов ПОСЛЕ запуска всех потоков:")
+            post_start_resources = monitor_system_resources()
+            
+            # Ожидаем завершения всех потоков
+            for thread in threads:
+                thread.join()
+            
+            # Мониторинг ресурсов после завершения всех потоков
+            print("📊 Мониторинг ресурсов ПОСЛЕ завершения всех потоков:")
+            final_resources = monitor_system_resources()
+            
+            # Подсчитываем общее время
+            total_results['total_time'] = time.time() - start_time
+            
+            # Выводим итоговые результаты
+            print("\n" + "="*60)
+            print("📊 ИТОГОВЫЕ РЕЗУЛЬТАТЫ ПО ВСЕМ ТАБЛИЦАМ И ЛИСТАМ")
+            print("="*60)
+            print(f"📋 Всего таблиц: {total_results['total_spreadsheets']}")
+            print(f"📄 Всего листов: {total_results['total_sheets']}")
+            print(f"✅ Обработано листов: {total_results['processed_sheets']}")
+            print(f"🌐 Всего URL: {total_results['total_urls']}")
+            print(f"✅ Обработано URL: {total_results['processed_urls']}")
+            print(f"🎯 Всего совпадений: {total_results['total_matches']}")
+            print(f"📝 Всего обновлений: {total_results['total_updates']}")
+            print(f"⏱️ Общее время: {total_results['total_time']:.1f} секунд")
+            print(f"👥 Использовано потоков: {actual_workers}")
+            
+            # ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов (Размещен + Удален) ПОСЛЕ парсинга
+            if total_results['placement_updates']:
+                print(f"\n🚀 ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов ({len(total_results['placement_updates'])} записей)")
+                print("="*70)
                 
-                # URL используется как идентификатор (card_id = url)
-                card_id = sheet_reviews[0]['card_id'] if sheet_reviews else url
+                placement_results = batch_updater.batch_update_reviews(total_results['placement_updates'])
                 
-                # Для отзывов «Размещен» парсим глубже (RECHECK_DAYS), иначе — MAX_DAYS_BACK
-                has_placed = any(r.get('status') == 'Размещен' for r in sheet_reviews)
-                effective_max_days = max(MAX_DAYS_BACK, RECHECK_DAYS) if has_placed else MAX_DAYS_BACK
+                print(f"🎯 ИТОГ ЭТАПА 3: Обновлено {placement_results['success']} записей")
+                if placement_results['failed'] > 0:
+                    print(f"❌ Ошибок размещения: {placement_results['failed']}")
+                print("="*70)
+            else:
+                print(f"\nℹ️ ЭТАП 3: Нет найденных совпадений для размещения")
+            
+            if total_results['errors']:
+                print(f"\n❌ Ошибки ({len(total_results['errors'])}):")
+                for error in total_results['errors'][:10]:  # Показываем первые 10 ошибок
+                    sheet = error.get('sheet', 'Unknown')
+                    url = error.get('url', 'Unknown')
+                    error_msg = error.get('error', 'Unknown error')
+                    worker_id = error.get('worker_id', 'Unknown')
+                    print(f"   • Поток {worker_id}, Лист '{sheet}': {error_msg}")
                 
-                # Обрабатываем конкретный URL
-                url_result = parser.process_url_reviews(
-                    url=url,
-                    card_id=card_id,
-                    sheet_reviews=sheet_reviews,
-                    sheet_name=sheet_name,
-                    device_type=DEVICE_TYPE,
-                    max_days_back=effective_max_days,
-                    max_reviews_limit=MAX_REVIEWS_LIMIT
-                )
-                
-                # Собираем результаты
-                local_results['processed_urls'] += 1
-                
-                if url_result['matches']:
-                    local_results['total_matches'] += len(url_result['matches'])
-                local_results['total_updates'] += len(url_result.get('updates', []))
-                
-                # Накапливаем обновления (статус + Последняя проверка + Ошибки)
-                for update in url_result.get('updates', []):
-                    placement_data = {
-                        'spreadsheet_url': spreadsheet_url,
-                        'sheet_name': sheet_name,
-                        'row': update.get('row'),
-                        'status': update.get('status'),
-                        'date': update.get('date'),
-                        'last_check': update.get('last_check'),
-                        'error': update.get('error', '')
-                    }
-                    local_results['placement_updates'].append(placement_data)
-                
-                if url_result['error']:
-                    local_results['errors'].append({
-                        'sheet': sheet_name,
-                        'url': url,
-                        'error': url_result['error'],
-                        'worker_id': worker_id
-                    })
-                
-                # Пауза между URL-ами
-                if url_index < len(url_batch):
-                    time.sleep(DELAY_BETWEEN_URLS)
-                
-            except Exception as e:
-                error_msg = f"Ошибка обработки URL {url}: {e}"
-                print(f"🧵 Поток {worker_id}: ❌ {error_msg}")
-                local_results['errors'].append({
-                    'sheet': sheet_name,
-                    'url': url,
-                    'error': str(e),
-                    'worker_id': worker_id
-                })
-        
-        # Обновляем общие результаты
-        with results_lock:
-            total_results['processed_urls'] += local_results['processed_urls']
-            total_results['total_matches'] += local_results['total_matches']
-            total_results['total_updates'] += local_results['total_updates']
-            total_results['placement_updates'].extend(local_results['placement_updates'])
-            total_results['errors'].extend(local_results['errors'])
-        
-        print(f"🧵 Поток {worker_id}: Батч завершен")
-        print(f"   🌐 Обработано URL: {local_results['processed_urls']}")
-        print(f"   🎯 Найдено совпадений: {local_results['total_matches']}")
-        print(f"   📝 Обновлено статусов: {local_results['total_updates']}")
-    
-    # Запускаем потоки
-    threads = []
-    print(f"\n🚀 Запуск {len(url_batches)} потоков...")
-    
-    for i, batch in enumerate(url_batches):
-        delay = i * DELAY_BETWEEN_WORKERS
-        thread = threading.Thread(
-            target=process_url_batch,
-            args=(batch, i + 1, delay)
-        )
-        threads.append(thread)
-        thread.start()
-        print(f"🚀 Запущен поток {i + 1}/{len(url_batches)}")
-    
-    # Мониторинг ресурсов после запуска всех потоков
-    print("📊 Мониторинг ресурсов ПОСЛЕ запуска всех потоков:")
-    post_start_resources = monitor_system_resources()
-    
-    # Ожидаем завершения всех потоков
-    for thread in threads:
-        thread.join()
-    
-    # Мониторинг ресурсов после завершения всех потоков
-    print("📊 Мониторинг ресурсов ПОСЛЕ завершения всех потоков:")
-    final_resources = monitor_system_resources()
-    
-    # Подсчитываем общее время
-    total_results['total_time'] = time.time() - start_time
-    
-    # Выводим итоговые результаты
-    print("\n" + "="*60)
-    print("📊 ИТОГОВЫЕ РЕЗУЛЬТАТЫ ПО ВСЕМ ТАБЛИЦАМ И ЛИСТАМ")
-    print("="*60)
-    print(f"📋 Всего таблиц: {total_results['total_spreadsheets']}")
-    print(f"📄 Всего листов: {total_results['total_sheets']}")
-    print(f"✅ Обработано листов: {total_results['processed_sheets']}")
-    print(f"🌐 Всего URL: {total_results['total_urls']}")
-    print(f"✅ Обработано URL: {total_results['processed_urls']}")
-    print(f"🎯 Всего совпадений: {total_results['total_matches']}")
-    print(f"📝 Всего обновлений: {total_results['total_updates']}")
-    print(f"⏱️ Общее время: {total_results['total_time']:.1f} секунд")
-    print(f"👥 Использовано потоков: {actual_workers}")
-    
-    # ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов (Размещен + Удален) ПОСЛЕ парсинга
-    if total_results['placement_updates']:
-        print(f"\n🚀 ЭТАП 3: БАТЧЕВОЕ ОБНОВЛЕНИЕ статусов ({len(total_results['placement_updates'])} записей)")
-        print("="*70)
-        
-        placement_results = batch_updater.batch_update_reviews(total_results['placement_updates'])
-        
-        print(f"🎯 ИТОГ ЭТАПА 3: Обновлено {placement_results['success']} записей")
-        if placement_results['failed'] > 0:
-            print(f"❌ Ошибок размещения: {placement_results['failed']}")
-        print("="*70)
-    else:
-        print(f"\nℹ️ ЭТАП 3: Нет найденных совпадений для размещения")
-    
-    if total_results['errors']:
-        print(f"\n❌ Ошибки ({len(total_results['errors'])}):")
-        for error in total_results['errors'][:10]:  # Показываем первые 10 ошибок
-            sheet = error.get('sheet', 'Unknown')
-            url = error.get('url', 'Unknown')
-            error_msg = error.get('error', 'Unknown error')
-            worker_id = error.get('worker_id', 'Unknown')
-            print(f"   • Поток {worker_id}, Лист '{sheet}': {error_msg}")
-        
-        if len(total_results['errors']) > 10:
-            print(f"   ... и еще {len(total_results['errors']) - 10} ошибок")
-    
-    if total_results['processed_urls'] == total_results['total_urls']:
-        print(f"\n🎉 Все URL обработаны успешно!")
-    else:
-        print(f"\n⚠️ Обработано {total_results['processed_urls']} из {total_results['total_urls']} URL")
-    
-    print(f"\n📈 Производительность:")
-    if total_results['total_time'] > 0:
-        urls_per_second = total_results['processed_urls'] / total_results['total_time']
-        print(f"   🌐 URL в секунду: {urls_per_second:.2f}")
-        print(f"   ⚡ Среднее время на URL: {total_results['total_time'] / max(total_results['processed_urls'], 1):.1f} сек")
-        print(f"   🏆 Эффективность потоков: {(total_results['processed_urls'] / (actual_workers * total_results['total_time'] / 60)):.1f} URL/поток/мин")
-    
-    # Финальная очистка всех профилей
-    cleanup_all_profiles()
+                if len(total_results['errors']) > 10:
+                    print(f"   ... и еще {len(total_results['errors']) - 10} ошибок")
+            
+            if total_results['processed_urls'] == total_results['total_urls']:
+                print(f"\n🎉 Все URL обработаны успешно!")
+            else:
+                print(f"\n⚠️ Обработано {total_results['processed_urls']} из {total_results['total_urls']} URL")
+            
+            print(f"\n📈 Производительность:")
+            if total_results['total_time'] > 0:
+                urls_per_second = total_results['processed_urls'] / total_results['total_time']
+                print(f"   🌐 URL в секунду: {urls_per_second:.2f}")
+                print(f"   ⚡ Среднее время на URL: {total_results['total_time'] / max(total_results['processed_urls'], 1):.1f} сек")
+                print(f"   🏆 Эффективность потоков: {(total_results['processed_urls'] / (actual_workers * total_results['total_time'] / 60)):.1f} URL/поток/мин")
+            
+            # Финальная очистка всех профилей
+            cleanup_all_profiles()
 
+        except KeyboardInterrupt:
+            thread_print("⏹ Остановка по Ctrl+C")
+            break
+        except Exception as e:
+            thread_print(f"❌ Критическая ошибка: {e}")
+            if RUN_INTERVAL_HOURS <= 0:
+                raise
+
+        if RUN_INTERVAL_HOURS <= 0:
+            break
+        wait_seconds = int(RUN_INTERVAL_HOURS * 3600)
+        thread_print(f"⏳ Пауза {RUN_INTERVAL_HOURS} ч. Следующий запуск через {wait_seconds} сек.")
+        time.sleep(wait_seconds)
 
 
 # Импортируем все настройки из config.py
@@ -1212,7 +1227,8 @@ from config import (
     SPREADSHEETS, CREDENTIALS_FILE, 
     DEVICE_TYPE, WAIT_TIME, MAX_DAYS_BACK, MAX_REVIEWS_LIMIT, 
     USE_PROXY, SIMILARITY_THRESHOLD, MAX_WORKERS, 
-    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS, RECHECK_DAYS
+    DELAY_BETWEEN_WORKERS, DELAY_BETWEEN_URLS, RECHECK_DAYS,
+    RUN_INTERVAL_HOURS
 )
 
 # ============================================================================
