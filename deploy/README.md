@@ -35,5 +35,6 @@ journalctl -u yamparser -f
 ## Важно
 
 - Путь в службе: `/home/danil/yamparser` — измените в `.service` если пользователь или путь другие.
+- Требуется `xvfb`: `sudo apt install xvfb -y` (для headless-режима Chrome).
 - Логи парсера пишутся в `logs/YYYY-MM-DD.txt` внутри рабочей директории.
 - Убедитесь, что в `config.py` установлено `HEADLESS_MODE = True` для сервера.
