@@ -58,6 +58,7 @@ chrome_debug.log
 captcha_initial_state.json
 profiles_state.json
 credentials.json
+proxy.txt
 
 # MacOS
 .DS_Store
