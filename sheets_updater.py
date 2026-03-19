@@ -137,10 +137,15 @@ class SheetsUpdater:
         Пакетное обновление статусов и/или «Последняя проверка» + «Ошибки».
         Каждый update: row, last_check, error; опционально status, date.
         Колонки «Последняя проверка» и «Ошибки» создаются автоматически, если отсутствуют.
+        Использует один batch_update на лист вместо цикла по записям.
         """
         if not updates:
             thread_print("⚠️ Нет обновлений для выполнения")
             return {'success': 0, 'failed': 0}
+        
+        if not self.gc:
+            thread_print("❌ Google Sheets API не настроен")
+            return {'success': 0, 'failed': len(updates)}
         
         # Убеждаемся, что колонки есть во всех затронутых листах
         seen_sheets = set()
@@ -150,40 +155,88 @@ class SheetsUpdater:
                 seen_sheets.add(key)
                 self.ensure_columns_exist(key[0], key[1])
         
-        results = {'success': 0, 'failed': 0}
+        # Группируем обновления по (spreadsheet_url, sheet_name)
+        grouped_updates = {}
+        skipped = 0
+        for update in updates:
+            key = (update.get('spreadsheet_url'), update.get('sheet_name'))
+            if key[0] and key[1]:
+                if key not in grouped_updates:
+                    grouped_updates[key] = []
+                grouped_updates[key].append(update)
+            else:
+                skipped += 1
+        
+        results = {'success': 0, 'failed': skipped}
         thread_print(f"📝 Начинаем пакетное обновление {len(updates)} записей...")
         
-        for i, update in enumerate(updates, 1):
+        for (spreadsheet_url, sheet_name), sheet_updates in grouped_updates.items():
             try:
-                if update.get('status') is not None:
-                    success = self.update_review_status(
-                        spreadsheet_url=update['spreadsheet_url'],
-                        sheet_name=update['sheet_name'],
-                        row_number=update['row'],
-                        new_status=update['status'],
-                        publication_date=update.get('date'),
-                        last_check=update.get('last_check'),
-                        error_text=update.get('error', '')
-                    )
+                spreadsheet_id = self.extract_spreadsheet_id(spreadsheet_url)
+                spreadsheet = self.gc.open_by_key(spreadsheet_id)
+                worksheet = spreadsheet.worksheet(sheet_name)
+                headers = worksheet.row_values(1)
+                
+                status_col = None
+                date_col = None
+                last_check_col = None
+                error_col = None
+                for i, header in enumerate(headers, 1):
+                    if header == "Статус":
+                        status_col = i
+                    elif header == "Дата публикации":
+                        date_col = i
+                    elif header == "Последняя проверка":
+                        last_check_col = i
+                    elif header == "Ошибки":
+                        error_col = i
+                
+                batch_data = []
+                batch_aborted = False
+                for update in sheet_updates:
+                    row_number = update['row']
+                    last_check = update.get('last_check', '')
+                    error_text = update.get('error', '') or ''
+                    status = update.get('status')
+                    date = update.get('date')
+                    
+                    if status is not None:
+                        if not status_col:
+                            thread_print(f"❌ Колонка 'Статус' не найдена в листе '{sheet_name}'")
+                            results['failed'] += len(sheet_updates)
+                            batch_aborted = True
+                            break
+                        batch_data.append({
+                            'range': f'{self._get_column_letter(status_col)}{row_number}',
+                            'values': [[status]]
+                        })
+                        if date and date_col:
+                            batch_data.append({
+                                'range': f'{self._get_column_letter(date_col)}{row_number}',
+                                'values': [[date]]
+                            })
+                    
+                    if last_check_col is not None:
+                        batch_data.append({
+                            'range': f'{self._get_column_letter(last_check_col)}{row_number}',
+                            'values': [[last_check]]
+                        })
+                    if error_col is not None:
+                        batch_data.append({
+                            'range': f'{self._get_column_letter(error_col)}{row_number}',
+                            'values': [[error_text]]
+                        })
+                
+                if batch_data and not batch_aborted:
+                    worksheet.batch_update(batch_data)
+                    results['success'] += len(sheet_updates)
+                    thread_print(f"✅ Лист '{sheet_name}': обновлено {len(sheet_updates)} записей")
                 else:
-                    success = self.update_check_info(
-                        spreadsheet_url=update['spreadsheet_url'],
-                        sheet_name=update['sheet_name'],
-                        row_number=update['row'],
-                        last_check=update.get('last_check', ''),
-                        error_text=update.get('error', '')
-                    )
-                
-                if success:
-                    results['success'] += 1
-                else:
-                    results['failed'] += 1
-                
-                thread_print(f"📊 Прогресс: {i}/{len(updates)} ({results['success']} успешно, {results['failed']} ошибок)")
-                
+                    results['failed'] += len(sheet_updates)
+                    
             except Exception as e:
-                results['failed'] += 1
-                thread_print(f"❌ Ошибка обновления записи {i}: {e}")
+                thread_print(f"❌ Ошибка батчевого обновления в листе '{sheet_name}': {e}")
+                results['failed'] += len(sheet_updates)
         
         thread_print(f"🎯 Пакетное обновление завершено: {results['success']} успешно, {results['failed']} ошибок")
         return results

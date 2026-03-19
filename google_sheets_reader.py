@@ -112,6 +112,8 @@ class GoogleSheetsReader:
             
             # Создаем DataFrame с правильным количеством колонок
             if headers:
+                # Нормализуем заголовки (убираем пробелы по краям) — "Дата публикации " -> "Дата публикации"
+                headers = [str(h).strip() for h in headers]
                 # Дополняем короткие строки пустыми значениями до длины заголовков
                 normalized_data = []
                 for row in data_rows:
@@ -134,6 +136,9 @@ class GoogleSheetsReader:
             
             return df
             
+        except ValueError:
+            # Ошибка валидации колонок — пробрасываем, чтобы показать реальную причину
+            raise
         except Exception as e:
             print(f"❌ Ошибка чтения листа '{sheet_name}': {e}")
             return pd.DataFrame()
