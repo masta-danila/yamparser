@@ -50,11 +50,10 @@ def _get_text(container):
         short = container.find_element(By.CSS_SELECTOR, TEXT_SHORT)
         txt_visible = short.text
         txt_content = short.get_attribute("textContent") or ""
-        thread_print("DEBUG short .text='%s' textContent='%s'" % (repr(txt_visible[:40]), repr(txt_content[:40])))
         txt = txt_visible or txt_content
         parts.append(txt.strip())
-    except Exception as e:
-        thread_print("DEBUG short not found: %s" % e)
+    except Exception:
+        pass
     try:
         additional = container.find_element(By.CSS_SELECTOR, TEXT_ADDITIONAL)
         # Скрытый элемент: .text пустой, берём textContent
@@ -71,7 +70,6 @@ def _extract_single_review(container):
         review_data = {"author": "Аноним", "date": "", "rating": None, "text": ""}
 
         text = _get_text(container)
-        thread_print("DEBUG _get_text: '%s'" % text[:80] if text else "DEBUG _get_text: EMPTY")
         if not text:
             return None
 
