@@ -72,6 +72,14 @@ def monitor_system_resources():
         thread_print(f"❌ Ошибка мониторинга ресурсов: {e}")
         return None
 
+
+def _truncate_error_for_sheet(err: str) -> str:
+    """Оставляет только первую строку ошибки для записи в таблицу (без stacktrace)."""
+    if not err:
+        return ""
+    return str(err).strip().split('\n')[0].strip()
+
+
 # ============================================================
 # ============================================================
 
@@ -456,7 +464,7 @@ class IntegratedParser:
             if not platform_result or not platform_result.get('success', False):
                 error_msg = f"Ошибка парсинга URL {url}"
                 if platform_result and platform_result.get('error'):
-                    error_msg += f": {platform_result['error']}"
+                    error_msg += f": {_truncate_error_for_sheet(platform_result['error'])}"
                 last_check = self._get_last_check_str()
                 updates = [
                     {'spreadsheet_url': self.spreadsheet_url, 'sheet_name': sheet_name,
@@ -573,7 +581,7 @@ class IntegratedParser:
             return result
             
         except Exception as e:
-            error_msg = f"Ошибка обработки URL {url}: {e}"
+            error_msg = f"Ошибка обработки URL {url}: {_truncate_error_for_sheet(str(e))}"
             thread_print(f"❌ {error_msg}")
             last_check = self._get_last_check_str()
             updates = [
@@ -1101,12 +1109,12 @@ def main():
                             time.sleep(DELAY_BETWEEN_URLS)
                         
                     except Exception as e:
-                        error_msg = f"Ошибка обработки URL {url}: {e}"
+                        error_msg = f"Ошибка обработки URL {url}: {_truncate_error_for_sheet(str(e))}"
                         print(f"🧵 Поток {worker_id}: ❌ {error_msg}")
                         local_results['errors'].append({
                             'sheet': sheet_name,
                             'url': url,
-                            'error': str(e),
+                            'error': _truncate_error_for_sheet(str(e)),
                             'worker_id': worker_id
                         })
                 
