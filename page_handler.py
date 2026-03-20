@@ -347,15 +347,16 @@ def click_sort_by_date(driver):
         print(f"❌ Общая ошибка в функции сортировки: {e}")
         return False
 
-def handle_popup_if_available(driver):
+def handle_popup_if_available(driver, verbose=True):
     """Обработка всплывающих окон если доступен модуль"""
     if POPUP_HANDLER_AVAILABLE and handle_popup_simple:
         try:
-            handle_popup_simple(driver, verbose=True)
+            handle_popup_simple(driver, verbose=verbose)
         except Exception as e:
             print(f"⚠️ Ошибка обработки всплывающего окна: {e}")
     else:
-        print("⚠️ Модуль обработки всплывающих окон недоступен")
+        if verbose:
+            print("⚠️ Модуль обработки всплывающих окон недоступен")
 
 def scroll_page(driver):
     """Прокрутка страницы вниз для загрузки дополнительных отзывов"""

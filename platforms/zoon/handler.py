@@ -87,6 +87,24 @@ class ZoonHandler(BasePlatformHandler):
                 click_zoon_reviews_tab(driver)
                 time.sleep(2)
 
+                # Проверяем блок "Отзывов пока нет" — карточка без отзывов
+                from selenium.webdriver.common.by import By
+                empty_block = driver.find_elements(By.CSS_SELECTOR, ".comments-empty-text")
+                if empty_block:
+                    thread_print("ℹ️ На карточке Zoon нет отзывов (блок 'Отзывов пока нет')")
+                    if driver:
+                        driver.quit()
+                        driver = None
+                    cleanup_all_profiles()
+                    return {
+                        "success": True,
+                        "reviews": [],
+                        "reviews_found": 0,
+                        "error": None,
+                        "url": url,
+                        "card_id": card_id,
+                    }
+
                 from .review_extractor import extract_reviews as extract_zoon_reviews
                 reviews_data = extract_zoon_reviews(
                     driver,
@@ -102,11 +120,12 @@ class ZoonHandler(BasePlatformHandler):
                 cleanup_all_profiles()
 
                 if not reviews_data:
+                    thread_print("ℹ️ Отзывов в заданном диапазоне дат не найдено (Zoon)")
                     return {
-                        "success": False,
+                        "success": True,
                         "reviews": [],
                         "reviews_found": 0,
-                        "error": "Отзывы не найдены на странице Zoon. Проверьте структуру страницы или наличие отзывов.",
+                        "error": None,
                         "url": url,
                         "card_id": card_id,
                     }

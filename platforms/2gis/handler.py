@@ -120,8 +120,23 @@ class TwoGisHandler(BasePlatformHandler):
 
                 time.sleep(1)
 
+                # Проверка: карточка без отзывов (есть вкладка «Инфо», но нет «Отзывы»)
+                from .page_utils import click_reviews_tab, has_reviews_tab, has_info_tab_only
+                if has_info_tab_only(driver):
+                    thread_print("ℹ️ На карточке 2GIS нет отзывов (только вкладка «Инфо»)")
+                    if driver:
+                        driver.quit()
+                        driver = None
+                    cleanup_all_profiles()
+                    return {
+                        "success": True,
+                        "reviews": [],
+                        "reviews_found": 0,
+                        "url": url,
+                        "card_id": card_id,
+                    }
+
                 # Вкладка «Отзывы» — критичный элемент, при отсутствии выбросит ошибку
-                from .page_utils import click_reviews_tab
                 click_reviews_tab(driver)
                 time.sleep(2)  # Даём отзывам загрузиться
 
@@ -141,11 +156,11 @@ class TwoGisHandler(BasePlatformHandler):
                 cleanup_all_profiles()
 
                 if not reviews_data:
+                    thread_print("ℹ️ Отзывов в заданном диапазоне дат не найдено (2GIS)")
                     return {
-                        "success": False,
+                        "success": True,
                         "reviews": [],
                         "reviews_found": 0,
-                        "error": "Отзывы не найдены на странице 2GIS. Проверьте структуру страницы или наличие отзывов.",
                         "url": url,
                         "card_id": card_id,
                     }

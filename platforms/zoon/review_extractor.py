@@ -12,6 +12,8 @@
 
 from datetime import datetime, timedelta
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from thread_logger import thread_print
 
@@ -46,10 +48,13 @@ def _get_text(container):
     parts = []
     try:
         short = container.find_element(By.CSS_SELECTOR, TEXT_SHORT)
-        txt = short.text or short.get_attribute("textContent") or ""
+        txt_visible = short.text
+        txt_content = short.get_attribute("textContent") or ""
+        thread_print("DEBUG short .text='%s' textContent='%s'" % (repr(txt_visible[:40]), repr(txt_content[:40])))
+        txt = txt_visible or txt_content
         parts.append(txt.strip())
-    except Exception:
-        pass
+    except Exception as e:
+        thread_print("DEBUG short not found: %s" % e)
     try:
         additional = container.find_element(By.CSS_SELECTOR, TEXT_ADDITIONAL)
         # Скрытый элемент: .text пустой, берём textContent
@@ -66,6 +71,7 @@ def _extract_single_review(container):
         review_data = {"author": "Аноним", "date": "", "rating": None, "text": ""}
 
         text = _get_text(container)
+        thread_print("DEBUG _get_text: '%s'" % text[:80] if text else "DEBUG _get_text: EMPTY")
         if not text:
             return None
 
@@ -112,6 +118,16 @@ def _extract_single_review(container):
         return review_data
     except Exception:
         return None
+
+
+def _is_top_level_review(item):
+    """Проверяет, что это верхнеуровневый отзыв, а не вложенный ответ."""
+    try:
+        parent = item.find_element(By.XPATH, "./..")
+        parent_class = parent.get_attribute("class") or ""
+        return "comment-item__children" not in parent_class
+    except Exception:
+        return True
 
 
 def _get_oldest_visible_date(driver):
@@ -173,6 +189,15 @@ def extract_reviews(driver, max_days_back=30, max_reviews_limit=100, scroll_to_l
     Возвращает список dict: author, date, rating, text.
     """
     import time
+
+    # Ожидаем появления списка отзывов (контент может подгружаться после клика по вкладке)
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "ul.js-feedbacks-new"))
+        )
+    except Exception:
+        pass
+
     target_dt = None
     if target_date:
         try:
@@ -201,11 +226,17 @@ def extract_reviews(driver, max_days_back=30, max_reviews_limit=100, scroll_to_l
                 break
             time.sleep(0.5)
     elif scroll_to_load:
-        from .scroll_reviews import scroll_zoon_reviews
-        max_attempts = _max_scroll_attempts_from_target_date(None)
-        thread_print("Прокрутка Zoon для подгрузки отзывов (макс. %s кликов)..." % max_attempts)
-        scroll_zoon_reviews(driver, max_attempts=max_attempts)
-        time.sleep(1)
+        # Сначала пробуем извлечь без прокрутки — при 1 отзыве прокрутка может мешать
+        pre_containers = driver.find_elements(By.CSS_SELECTOR, REVIEW_CONTAINER)
+        if not pre_containers:
+            all_pre = driver.find_elements(By.CSS_SELECTOR, REVIEW_ITEM_SELECTOR)
+            pre_containers = [c for c in all_pre if _is_top_level_review(c)]
+        if not pre_containers:
+            from .scroll_reviews import scroll_zoon_reviews
+            max_attempts = _max_scroll_attempts_from_target_date(None)
+            thread_print("Прокрутка Zoon для подгрузки отзывов (макс. %s кликов)..." % max_attempts)
+            scroll_zoon_reviews(driver, max_attempts=max_attempts)
+            time.sleep(1)
 
     cutoff_date = datetime.now() - timedelta(days=max_days_back)
     reviews_data = []
@@ -213,6 +244,12 @@ def extract_reviews(driver, max_days_back=30, max_reviews_limit=100, scroll_to_l
 
     try:
         containers = driver.find_elements(By.CSS_SELECTOR, REVIEW_CONTAINER)
+        # Fallback: если основной селектор не нашёл — берём все li, исключая вложенные ответы
+        if not containers:
+            all_items = driver.find_elements(By.CSS_SELECTOR, REVIEW_ITEM_SELECTOR)
+            containers = [c for c in all_items if _is_top_level_review(c)]
+            if containers:
+                thread_print("Zoon: использован fallback-селектор (найдено %s)" % len(containers))
         thread_print("Найдено контейнеров отзывов Zoon: %s" % len(containers))
 
         for container in containers:

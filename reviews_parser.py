@@ -1588,6 +1588,27 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
         else:
             print("✅ CAPTCHA не обнаружена! Страница загружена успешно.")
         
+        # Проверка: карточка без отзывов (блок "Будьте первым!")
+        empty_tab = driver.find_elements(By.CSS_SELECTOR, ".card-reviews-view._empty-tab")
+        if empty_tab:
+            print("ℹ️ На карточке нет отзывов (пустая вкладка)")
+            return {
+                "success": True,
+                "url": driver.current_url,
+                "title": driver.title,
+                "card_id": card_id,
+                "captcha_detected": False,
+                "sort_applied": False,
+                "screenshot": None,
+                "parsing_strategy": parsing_strategy,
+                "reviews_found": 0,
+                "reviews": [],
+                "database_result": {"saved": 0, "duplicates": 0, "errors": 0}
+            }
+        
+        # Попап может выскочить на любом этапе — проверяем перед сортировкой
+        handle_popup_if_available(driver, verbose=False)
+        
         # Применяем сортировку
         sort_applied = click_sort_by_date(driver)
         
@@ -1603,6 +1624,9 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             print(f"⏳ Пауза после сортировки: {human_pause:.1f} сек...")
             time.sleep(human_pause)
         
+        # Попап может выскочить на любом этапе — проверяем перед прокруткой
+        handle_popup_if_available(driver, verbose=False)
+        
         # 🚀 НОВАЯ БЫСТРАЯ ЛОГИКА: быстрая прокрутка → массовое раскрытие → считывание
         print(f"\n🚀 БЫСТРАЯ ЛОГИКА: быстрая прокрутка → массовое раскрытие → считывание...")
         
@@ -1614,6 +1638,9 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
             expanded_count = fast_scroll_and_expand_with_date_limit(driver, max_days_back)
         
         print(f"✅ Загружено отзывов на страницу: {expanded_count}")
+        
+        # Попап может выскочить на любом этапе — проверяем перед извлечением
+        handle_popup_if_available(driver, verbose=False)
         
         # Извлекаем отзывы в зависимости от стратегии
         print(f"\n📝 Извлекаем отзывы (стратегия: {parsing_strategy})...")
@@ -1634,12 +1661,27 @@ def get_reviews_page(url, device_type="desktop", wait_time=5, max_days_back=30, 
                 print(f"   ❌ Отфильтровано старых отзывов: {original_count - len(reviews_data)}")
                 print(f"   ✅ Остается для сохранения: {len(reviews_data)}")
 
-        # Отзывы не найдены — критичная ошибка (элементы страницы или структура изменились)
+        # Отзывы не найдены — это не ошибка: либо карточка пуста, либо все отзывы вне диапазона дат
         if not reviews_data:
-            raise RuntimeError(
-                "Отзывы не найдены на странице Яндекс.Карт. "
-                "Проверьте структуру страницы или наличие отзывов."
-            )
+            empty_tab = driver.find_elements(By.CSS_SELECTOR, ".card-reviews-view._empty-tab")
+            empty_text = driver.find_elements(By.XPATH, "//*[contains(text(), 'Будьте первым!')]")
+            if empty_tab or empty_text:
+                print("ℹ️ На карточке нет отзывов (пустая вкладка)")
+            else:
+                print("ℹ️ Отзывов в заданном диапазоне дат не найдено")
+            return {
+                "success": True,
+                "url": driver.current_url,
+                "title": driver.title,
+                "card_id": card_id,
+                "captcha_detected": False,
+                "sort_applied": sort_applied,
+                "screenshot": None,
+                "parsing_strategy": parsing_strategy,
+                "reviews_found": 0,
+                "reviews": [],
+                "database_result": {"saved": 0, "duplicates": 0, "errors": 0}
+            }
         
         # Сохраняем отзывы в базу данных
         save_result = save_reviews_to_database(reviews_data, card_id)
@@ -1839,6 +1881,9 @@ def fast_scroll_to_date_limit(driver, max_days_back):
         no_new_reviews_attempts = 0
         
         for attempt in range(max_attempts):
+            # Попап может выскочить во время прокрутки — проверяем каждые 3 итерации
+            if attempt % 3 == 0:
+                handle_popup_if_available(driver, verbose=False)
             try:
                 # Ищем правильный контейнер для прокрутки
                 print(f"🔍 Поиск контейнера для прокрутки...")
@@ -2137,6 +2182,9 @@ def fast_scroll_to_checkpoint(driver, checkpoint_info):
     scroll_step = 1500  # Очень большие шаги
     
     for attempt in range(max_attempts):
+        # Попап может выскочить во время прокрутки — проверяем каждые 3 итерации
+        if attempt % 3 == 0:
+            handle_popup_if_available(driver, verbose=False)
         try:
             # Быстрая прокрутка
             driver.execute_script(f"window.scrollBy(0, {scroll_step});")
